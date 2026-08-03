@@ -1,0 +1,12 @@
+version: "1.0"
+settings:
+  currency: USD
+  fail_on_cost_threshold: 50.00 # Fails execution with Exit Code 1 if waste > $50
+
+rules:
+  - id: FG-001
+    name: LLM-API-In-Loop
+    severity: HIGH
+    target_apis:
+      - openai.chat.completions
+      - anthropic.messages

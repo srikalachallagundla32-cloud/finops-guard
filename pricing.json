@@ -1,0 +1,33 @@
+{
+  "project_name": "FinOps-Guard",
+  "currency": "USD",
+  "region_default": "us-east-1",
+  "pricing_data": {
+    "amazon_athena": {
+      "billing_model": "on_demand_sql",
+      "cost_per_tb_scanned": 5.00,
+      "minimum_bytes_per_query": 10485760
+    },
+    "openai_api": {
+      "gpt_4o": {
+        "cost_per_million_input_tokens": 2.50,
+        "cost_per_million_output_tokens": 10.00
+      },
+      "gpt_4o_mini": {
+        "cost_per_million_input_tokens": 0.15,
+        "cost_per_million_output_tokens": 0.60
+      }
+    },
+    "anthropic_api": {
+      "claude_3_5_sonnet": {
+        "cost_per_million_input_tokens": 3.00,
+        "cost_per_million_output_tokens": 15.00
+      }
+    },
+    "amazon_dynamodb": {
+      "billing_model": "on_demand",
+      "cost_per_million_write_request_units": 1.25,
+      "cost_per_million_read_request_units": 0.25
+    }
+  }
+}
