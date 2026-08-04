@@ -20,7 +20,7 @@ func main() {
 	themeName := flag.String("theme", "tactical", "Cockpit HUD theme: "+strings.Join(ui.ThemeNames(), ", "))
 	flag.Parse()
 
-	theme, ok := ui.ByName(*themeName)
+	_, ok := ui.ByName(*themeName)
 	if !ok {
 		fmt.Printf("❌ [Error] Unknown theme %q. Valid options: %s\n", *themeName, strings.Join(ui.ThemeNames(), ", "))
 		os.Exit(1)
@@ -61,7 +61,7 @@ func main() {
 
 	costFailThreshold := config.FailOnCostThreshold(guardConfigPath)
 
-	if err := ui.RunFinalTUI(issues, totalRisk, costFailThreshold, theme); err != nil {
+	if err := ui.RunInspoCanvasTUI(issues, totalRisk, costFailThreshold); err != nil {
 		fmt.Printf("❌ [Error] Running interactive TUI: %v\n", err)
 		os.Exit(1)
 	}

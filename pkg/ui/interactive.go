@@ -14,80 +14,100 @@ import (
 	"github.com/your-username/finops-guard/pkg/analyzer"
 )
 
-// Frame Animation Ticker
 type TickMsg time.Time
 
 func doTick() tea.Cmd {
-	return tea.Tick(time.Millisecond*150, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Millisecond*80, func(t time.Time) tea.Msg {
 		return TickMsg(t)
 	})
 }
 
-// white is a fixed neutral text/background-contrast color, independent of theme.
-var white = lipgloss.Color("#FFFFFF")
+// Flame Palette (Black -> Red -> Orange -> Yellow -> White)
+var firePalette = []string{
+	"#000000", "#180000", "#300000", "#580000", "#800000",
+	"#A00000", "#C80000", "#E82800", "#FF5000", "#FF7800",
+	"#FFA000", "#FFC800", "#FFE000", "#FFFF40", "#FFFFFF",
+}
 
-var cfoQuotes = []string{
+// fireCanvasHeight is the raw fire-buffer row count; rendered as
+// fireCanvasHeight/2 half-block lines (two buffer rows per glyph).
+const fireCanvasHeight = 8
+
+var (
+	white = lipgloss.Color("#FFFFFF")
+	pink  = lipgloss.Color("#FF0055")
+	green = lipgloss.Color("#04B575")
+	gray  = lipgloss.Color("#4A4A4A")
+
+	radarBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(pink).Padding(0, 1)
+	inspectorBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(gray).Padding(0, 1)
+	quoteBox     = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(white).Padding(0, 1)
+)
+
+var criticalQuotes = []string{
 	`"If this loop hits production, our cloud bill will surpass our revenue."`,
 	`"My cloud bill alert notification just gave me a heart attack."`,
 	`"Is this an AI agent or a money incineration engine?"`,
 	`"We're going to have to downgrade the office coffee to fund this loop."`,
 }
 
-type FinalTUIModel struct {
-	theme         Theme
+var approvingQuotes = []string{
+	`"Finally, an engineering team that respects a budget."`,
+	`"This is the kind of efficiency that gets you a bonus, not a PIP."`,
+	`"I could almost enjoy reading a cost report for once."`,
+	`"Keep this up and we might actually hit our margin targets."`,
+}
+
+func pickCFOQuote(totalRisk, threshold float64) string {
+	pool := approvingQuotes
+	if totalRisk > threshold {
+		pool = criticalQuotes
+	}
+	return pool[rand.Intn(len(pool))]
+}
+
+type InspoCanvasModel struct {
 	issues        []analyzer.Issue
 	cursor        int
 	totalRisk     float64
 	threshold     float64
-	frame         int
+	width         int
+	fireBuffer    []int
+	frameCount    int
 	blink         bool
 	selectedQuote string
 }
 
-func NewFinalTUIModel(issues []analyzer.Issue, totalRisk float64, threshold float64, theme Theme) FinalTUIModel {
+func NewInspoCanvasModel(issues []analyzer.Issue, totalRisk float64, threshold float64) InspoCanvasModel {
 	rand.Seed(time.Now().UnixNano())
-	quote := cfoQuotes[rand.Intn(len(cfoQuotes))]
-	return FinalTUIModel{
-		theme:         theme,
+	width := 80
+	return InspoCanvasModel{
 		issues:        issues,
-		cursor:        0,
 		totalRisk:     totalRisk,
 		threshold:     threshold,
-		frame:         0,
+		width:         width,
+		fireBuffer:    make([]int, width*fireCanvasHeight),
 		blink:         true,
-		selectedQuote: quote,
+		selectedQuote: pickCFOQuote(totalRisk, threshold),
 	}
 }
 
-func (m FinalTUIModel) titleStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Bold(true).Foreground(white).Background(m.theme.Primary).Padding(0, 1)
-}
-
-func (m FinalTUIModel) gridBox() lipgloss.Style {
-	return lipgloss.NewStyle().Border(m.theme.Border).BorderForeground(m.theme.BorderColor).Padding(0, 1)
-}
-
-func (m FinalTUIModel) hazardBox() lipgloss.Style {
-	return lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(m.theme.Accent).Padding(0, 1)
-}
-
-func (m FinalTUIModel) statusBarStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(white).Background(m.theme.Primary).Padding(0, 1)
-}
-
-func (m FinalTUIModel) alertStatusStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(white).Background(m.theme.Accent).Bold(true).Padding(0, 1)
-}
-
-func (m FinalTUIModel) Init() tea.Cmd {
+func (m InspoCanvasModel) Init() tea.Cmd {
 	return doTick()
 }
 
-func (m FinalTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m InspoCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		if msg.Width > 0 {
+			m.width = msg.Width
+			m.fireBuffer = make([]int, m.width*fireCanvasHeight)
+		}
+
 	case TickMsg:
-		m.frame++
+		m.frameCount++
 		m.blink = !m.blink
+		m.updateFirePhysics()
 		return m, doTick()
 
 	case tea.KeyMsg:
@@ -97,85 +117,77 @@ func (m FinalTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				fmt.Print("\a") // Subtle terminal bell sound
 			}
 		case "down", "j":
 			if m.cursor < len(m.issues)-1 {
 				m.cursor++
-				fmt.Print("\a")
 			}
 		}
 	}
 	return m, nil
 }
 
-func (m FinalTUIModel) View() string {
-	var doc strings.Builder
-
-	// 1. Header Banner
-	doc.WriteString(m.titleStyle().Render("🛡️  FINOPS-GUARD :: COCKPIT HUD ["+strings.ToUpper(m.theme.Name)+"]") + "\n\n")
-
-	// 2. Money Burn ASCII Flame Graphic Header
-	doc.WriteString(m.renderFlameHeader() + "\n\n")
-
-	if len(m.issues) == 0 {
-		doc.WriteString(lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Render("✨ AAA REPO HEALTH! Zero loop cost exposure detected. Wall Street level efficiency!\n\nPress 'q' to exit."))
-		return doc.String()
+// Procedural Doom Fire Particle Physics Engine
+func (m *InspoCanvasModel) updateFirePhysics() {
+	if m.width == 0 {
+		return
 	}
 
-	// 3. Main 2-Column Split: Findings List (Left) vs Code Inspector (Right)
-	leftCol := m.renderFindingsList(28)
-	rightCol := m.renderCodeInspector(48)
-	mainSplit := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, rightCol)
-	doc.WriteString(mainSplit + "\n\n")
-
-	// 4. Virtual CFO Persona Quote Box
-	quoteContent := fmt.Sprintf("💼 VIRTUAL CFO SAYS:\n%s", lipgloss.NewStyle().Foreground(m.theme.Secondary).Italic(true).Render(m.selectedQuote))
-	doc.WriteString(m.gridBox().Render(quoteContent) + "\n\n")
-
-	// 5. Termflix-Style Status Bar Footer
-	doc.WriteString(m.renderStatusBar() + "\n")
-
-	return doc.String()
-}
-
-func (m FinalTUIModel) renderFlameHeader() string {
-	percent := (m.totalRisk / m.threshold) * 100
-	if percent > 100 {
-		percent = 100
+	// 1. Seed heat source at the bottom row based on financial exposure
+	maxHeat := len(firePalette) - 1
+	if m.totalRisk == 0 {
+		maxHeat = 3 // Subtle low ember glow
 	}
 
-	barLen := 30
-	filled := int((percent / 100) * float64(barLen))
+	bottomRow := (fireCanvasHeight - 1) * m.width
+	for x := 0; x < m.width; x++ {
+		m.fireBuffer[bottomRow+x] = rand.Intn(maxHeat + 1)
+	}
 
-	flameChars := []string{"▄", "█", "🔥", "▀"}
-	var flameStr strings.Builder
-	for i := 0; i < barLen; i++ {
-		if i < filled {
-			char := flameChars[(m.frame+i)%len(flameChars)]
-			flameStr.WriteString(lipgloss.NewStyle().Foreground(m.theme.Accent).Render(char))
-		} else {
-			flameStr.WriteString(lipgloss.NewStyle().Foreground(m.theme.Muted).Render("░"))
+	// 2. Propagate fire particles upwards with decay and wind drift
+	for y := 1; y < fireCanvasHeight; y++ {
+		for x := 0; x < m.width; x++ {
+			srcIndex := y*m.width + x
+			decay := rand.Intn(2)
+			dstX := (x + rand.Intn(3) - 1 + m.width) % m.width
+			dstIndex := (y-1)*m.width + dstX
+
+			val := m.fireBuffer[srcIndex] - decay
+			if val < 0 {
+				val = 0
+			}
+			m.fireBuffer[dstIndex] = val
 		}
 	}
-
-	statusMsg := "SAFE"
-	statusColor := m.theme.Primary
-	if m.totalRisk > m.threshold {
-		statusMsg = "🚨 THRESHOLD EXCEEDED"
-		statusColor = m.theme.Accent
-	}
-
-	return m.gridBox().Render(fmt.Sprintf(
-		"BURN RATE: [%s] $%.2f / $%.2f (%.0f%%)\nSTATUS:    %s",
-		flameStr.String(), m.totalRisk, m.threshold, (m.totalRisk/m.threshold)*100,
-		lipgloss.NewStyle().Foreground(statusColor).Bold(true).Render(statusMsg),
-	))
 }
 
-func (m FinalTUIModel) renderFindingsList(width int) string {
+func (m InspoCanvasModel) renderFireCanvas() string {
 	var s strings.Builder
-	s.WriteString(lipgloss.NewStyle().Bold(true).Foreground(m.theme.Primary).Render("FINDINGS (↑/↓)") + "\n\n")
+	for y := 0; y < fireCanvasHeight-1; y += 2 {
+		for x := 0; x < m.width; x++ {
+			topColorIdx := m.fireBuffer[y*m.width+x]
+			botColorIdx := m.fireBuffer[(y+1)*m.width+x]
+
+			cell := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(firePalette[botColorIdx])).
+				Background(lipgloss.Color(firePalette[topColorIdx])).
+				Render("▄")
+
+			s.WriteString(cell)
+		}
+		s.WriteString("\n")
+	}
+	return s.String()
+}
+
+func (m InspoCanvasModel) renderTargetRadar(width int) string {
+	var s strings.Builder
+	s.WriteString(lipgloss.NewStyle().Bold(true).Foreground(pink).Render("🎯 TARGET RADAR") + "\n\n")
+
+	if len(m.issues) == 0 {
+		s.WriteString(lipgloss.NewStyle().Foreground(green).Render("No targets acquired."))
+		return radarBox.Width(width).Render(s.String())
+	}
 
 	for i, issue := range m.issues {
 		cursor := "  "
@@ -186,10 +198,10 @@ func (m FinalTUIModel) renderFindingsList(width int) string {
 			if m.blink {
 				cursor = "█ "
 			}
-			style = lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true)
+			style = lipgloss.NewStyle().Foreground(pink).Bold(true)
 		}
 
-		s.WriteString(fmt.Sprintf("%s%s %s\n   └─ $%.2f/run\n",
+		s.WriteString(fmt.Sprintf("%s%s %s\n   └─ $%.4f/run\n",
 			cursor,
 			style.Render(issue.ID),
 			issue.RuleName,
@@ -197,32 +209,32 @@ func (m FinalTUIModel) renderFindingsList(width int) string {
 		))
 	}
 
-	return m.gridBox().Width(width).Render(s.String())
+	return radarBox.Width(width).Render(s.String())
 }
 
-func (m FinalTUIModel) renderCodeInspector(width int) string {
+func (m InspoCanvasModel) renderCodeInspector(width int) string {
 	if len(m.issues) == 0 {
-		return m.gridBox().Width(width).Render("No issues selected.")
+		return inspectorBox.Width(width).Render("No issue selected.")
 	}
 
 	selected := m.issues[m.cursor]
-	snippet := getCodeScopeSnippet(selected.FilePath, selected.LineNumber, m.theme)
+	snippet := getCodeScopeSnippet(selected.FilePath, selected.LineNumber)
 
 	content := fmt.Sprintf(
-		"🔍 INSPECTOR: %s [%s]\n📍 %s:%d\n💸 Est. Waste: $%.2f/run\n\nCODE SCOPE VISUALIZER:\n%s\n💡 REMEDIATION:\nBatch request parameters outside loop scope.",
+		"🔍 %s [%s]\n📍 %s:%d\n💸 $%.4f/run\n\n%s",
 		selected.RuleName, selected.ID,
 		selected.FilePath, selected.LineNumber,
 		selected.EstCostRisk,
 		snippet,
 	)
 
-	return m.hazardBox().Width(width).Render(content)
+	return inspectorBox.Width(width).Render(content)
 }
 
-func getCodeScopeSnippet(filePath string, targetLine int, theme Theme) string {
+func getCodeScopeSnippet(filePath string, targetLine int) string {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "   (Unable to load file context)"
+		return "  (unable to load file context)"
 	}
 	defer file.Close()
 
@@ -235,32 +247,72 @@ func getCodeScopeSnippet(filePath string, targetLine int, theme Theme) string {
 		if currentLine >= targetLine-2 && currentLine <= targetLine+2 {
 			lineText := scanner.Text()
 			pointer := "  "
-			lineNumStyle := lipgloss.NewStyle().Foreground(theme.Muted)
+			numStyle := lipgloss.NewStyle().Foreground(gray)
 
 			if currentLine == targetLine {
 				pointer = "⚡"
-				lineNumStyle = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+				numStyle = lipgloss.NewStyle().Foreground(pink).Bold(true)
 				lineText = lipgloss.NewStyle().Bold(true).Render(lineText) + " ◄── [MONEY LEAK]"
 			}
 
-			snippet.WriteString(fmt.Sprintf("%s %s │ %s\n", pointer, lineNumStyle.Render(fmt.Sprintf("%3d", currentLine)), lineText))
+			snippet.WriteString(fmt.Sprintf("%s %s │ %s\n", pointer, numStyle.Render(fmt.Sprintf("%3d", currentLine)), lineText))
 		}
 	}
 	return snippet.String()
 }
 
-func (m FinalTUIModel) renderStatusBar() string {
-	statusTag := m.alertStatusStyle().Render("STATUS: BREACHED")
-	if m.totalRisk <= m.threshold {
-		statusTag = m.statusBarStyle().Render("STATUS: SAFE")
+// renderCFOBanner keeps the Virtual CFO persona pinned at the bottom of the
+// dashboard, switching tone based on whether totalRisk has breached threshold.
+func (m InspoCanvasModel) renderCFOBanner() string {
+	label := "💼 VIRTUAL CFO (satisfied):"
+	color := green
+	if m.totalRisk > m.threshold {
+		label = "💼 VIRTUAL CFO (furious):"
+		color = pink
 	}
 
-	info := m.statusBarStyle().Render(fmt.Sprintf("FINOPS-GUARD v0.1.0 │ FRAME: %04d │ TrueColor 24FPS │ [q] Quit", m.frame))
-	return lipgloss.JoinHorizontal(lipgloss.Top, statusTag, info)
+	content := fmt.Sprintf("%s\n%s",
+		lipgloss.NewStyle().Bold(true).Foreground(color).Render(label),
+		lipgloss.NewStyle().Italic(true).Render(m.selectedQuote),
+	)
+
+	width := m.width - 2
+	if width < 20 {
+		width = 20
+	}
+	return quoteBox.Width(width).Render(content)
 }
 
-func RunFinalTUI(issues []analyzer.Issue, totalRisk float64, threshold float64, theme Theme) error {
-	p := tea.NewProgram(NewFinalTUIModel(issues, totalRisk, threshold, theme))
+func (m InspoCanvasModel) View() string {
+	var doc strings.Builder
+
+	// 1. Termflix particle canvas
+	doc.WriteString(m.renderFireCanvas() + "\n")
+
+	// 2. Target radar (left) + code inspector (right)
+	leftWidth := 28
+	rightWidth := m.width - leftWidth - 8
+	if rightWidth < 20 {
+		rightWidth = 20
+	}
+	radar := m.renderTargetRadar(leftWidth)
+	inspector := m.renderCodeInspector(rightWidth)
+	doc.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, radar, inspector) + "\n")
+
+	// 3. Virtual CFO persona banner, pinned at the bottom
+	doc.WriteString(m.renderCFOBanner() + "\n")
+
+	statusLine := fmt.Sprintf(" BURN: $%.2f / $%.2f │ FRAME: %04d │ [↑/↓] select │ [q] quit ",
+		m.totalRisk, m.threshold, m.frameCount)
+	doc.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#888888")).Render(statusLine))
+
+	return doc.String()
+}
+
+// RunInspoCanvasTUI launches the Termflix particle canvas dashboard with the
+// target radar, code inspector, and Virtual CFO persona banner.
+func RunInspoCanvasTUI(issues []analyzer.Issue, totalRisk float64, threshold float64) error {
+	p := tea.NewProgram(NewInspoCanvasModel(issues, totalRisk, threshold), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
