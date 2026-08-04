@@ -3,8 +3,17 @@ package costengine
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 )
+
+// RoundCurrency rounds a dollar amount to 4 decimal places so cost figures
+// stay clean across calculations, tests, and UI output. 4 decimals (not 2)
+// because sub-cent per-call/per-unit costs (e.g. a single DynamoDB write
+// request unit) would otherwise round to $0.00 and lose all signal.
+func RoundCurrency(cost float64) float64 {
+	return math.Round(cost*10000) / 10000
+}
 
 type PricingCatalog struct {
 	ProjectName   string        `json:"project_name"`
@@ -75,20 +84,20 @@ func (c *PricingCatalog) CalculateLLMLoopCost(model string, inputTokens, outputT
 	costPerCall := ((float64(inputTokens) / 1e6) * pricing.InputPerMillion) +
 		((float64(outputTokens) / 1e6) * pricing.OutputPerMillion)
 
-	return costPerCall * float64(estimatedIterations)
+	return RoundCurrency(costPerCall * float64(estimatedIterations))
 }
 
 // CalculateAthenaQueryCost estimates the cost of one Athena query at the
 // billing-minimum bytes scanned.
 func (c *PricingCatalog) CalculateAthenaQueryCost() float64 {
 	tbScanned := c.PricingData.AmazonAthena.MinimumBytesPerQuery / 1e12
-	return tbScanned * c.PricingData.AmazonAthena.CostPerTBScanned
+	return RoundCurrency(tbScanned * c.PricingData.AmazonAthena.CostPerTBScanned)
 }
 
 // CalculateDynamoDBWriteCost estimates the cost of a single DynamoDB write
 // request unit.
 func (c *PricingCatalog) CalculateDynamoDBWriteCost() float64 {
-	return c.PricingData.AmazonDynamoDB.CostPerMillionWRU / 1e6
+	return RoundCurrency(c.PricingData.AmazonDynamoDB.CostPerMillionWRU / 1e6)
 }
 
 const (

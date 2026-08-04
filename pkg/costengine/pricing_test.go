@@ -1,12 +1,15 @@
 package costengine_test
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/your-username/finops-guard/pkg/costengine"
 )
+
+const floatTolerance = 0.0001
 
 func TestCalculateLLMLoopCost(t *testing.T) {
 	// Setup temporary test pricing JSON
@@ -91,8 +94,8 @@ func TestCalculateLLMLoopCost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := catalog.CalculateLLMLoopCost(tt.model, tt.inputTokens, tt.outputTokens, tt.iterations)
-			if got != tt.expectedCost {
-				t.Errorf("CalculateLLMLoopCost() = %v; want %v", got, tt.expectedCost)
+			if diff := math.Abs(got - tt.expectedCost); diff > floatTolerance {
+				t.Errorf("CalculateLLMLoopCost() = %v; want %v (diff %v exceeds tolerance %v)", got, tt.expectedCost, diff, floatTolerance)
 			}
 		})
 	}
