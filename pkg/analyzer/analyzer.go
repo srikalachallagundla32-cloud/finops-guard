@@ -174,3 +174,95 @@ func ScanFile(filePath string, rules []DetectionRule) ([]Issue, error) {
 
 	return issues, nil
 }
+
+// remediationComment builds the advisory comment inserted above a flagged
+// line. This intentionally never rewrites the surrounding loop logic —
+// ScanFile's regex/indentation heuristics aren't a real parser, so anything
+// beyond a plain comment risks silently corrupting the developer's file.
+func remediationComment(issue Issue) string {
+	prefix := "//"
+	if strings.HasSuffix(issue.FilePath, ".py") {
+		prefix = "#"
+	}
+	return fmt.Sprintf("%s FINOPS-GUARD [%s]: batch this %s call outside the loop before merging.", prefix, issue.ID, issue.TargetAPI)
+}
+
+func leadingWhitespace(line string) string {
+	i := 0
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	return line[:i]
+}
+
+// fixPlan loads the target file and computes where the remediation comment
+// would be inserted, without writing anything back.
+func fixPlan(issue Issue) (lines []string, insertIdx int, comment string, err error) {
+	data, err := os.ReadFile(issue.FilePath)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("failed to read file %s: %w", issue.FilePath, err)
+	}
+
+	lines = strings.Split(string(data), "\n")
+	insertIdx = issue.LineNumber - 1
+	if insertIdx < 0 || insertIdx >= len(lines) {
+		return nil, 0, "", fmt.Errorf("line %d out of range for %s", issue.LineNumber, issue.FilePath)
+	}
+
+	comment = leadingWhitespace(lines[insertIdx]) + remediationComment(issue)
+	return lines, insertIdx, comment, nil
+}
+
+// PreviewFix returns a short before/after snippet (two lines of context on
+// each side of the flagged line) without modifying the file on disk.
+func PreviewFix(issue Issue) (before string, after string, err error) {
+	lines, insertIdx, comment, err := fixPlan(issue)
+	if err != nil {
+		return "", "", err
+	}
+
+	start := insertIdx - 2
+	if start < 0 {
+		start = 0
+	}
+	end := insertIdx + 3
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	before = strings.Join(lines[start:end], "\n")
+
+	afterLines := make([]string, 0, end-start+1)
+	afterLines = append(afterLines, lines[start:insertIdx]...)
+	afterLines = append(afterLines, comment)
+	afterLines = append(afterLines, lines[insertIdx:end]...)
+	after = strings.Join(afterLines, "\n")
+
+	return before, after, nil
+}
+
+// ApplyFix inserts the FinOps-Guard remediation comment directly above the
+// flagged line and writes the file back to disk, preserving its existing
+// file mode. Callers must obtain developer confirmation before calling this
+// — it performs no confirmation of its own.
+func ApplyFix(issue Issue) error {
+	lines, insertIdx, comment, err := fixPlan(issue)
+	if err != nil {
+		return err
+	}
+
+	mode := os.FileMode(0644)
+	if info, statErr := os.Stat(issue.FilePath); statErr == nil {
+		mode = info.Mode()
+	}
+
+	newLines := make([]string, 0, len(lines)+1)
+	newLines = append(newLines, lines[:insertIdx]...)
+	newLines = append(newLines, comment)
+	newLines = append(newLines, lines[insertIdx:]...)
+
+	if err := os.WriteFile(issue.FilePath, []byte(strings.Join(newLines, "\n")), mode); err != nil {
+		return fmt.Errorf("failed to write file %s: %w", issue.FilePath, err)
+	}
+	return nil
+}

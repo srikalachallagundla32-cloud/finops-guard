@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -76,6 +77,15 @@ type InspoCanvasModel struct {
 	frameCount    int
 	blink         bool
 	selectedQuote string
+	statusMsg     string
+
+	showFixModal bool
+	fixBefore    string
+	fixAfter     string
+	fixErr       string
+
+	showPromptModal bool
+	promptText      string
 }
 
 func NewInspoCanvasModel(issues []analyzer.Issue, totalRisk float64, threshold float64) InspoCanvasModel {
@@ -111,6 +121,33 @@ func (m InspoCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, doTick()
 
 	case tea.KeyMsg:
+		if m.showFixModal {
+			switch msg.String() {
+			case "y":
+				if len(m.issues) > 0 && m.fixErr == "" {
+					issue := m.issues[m.cursor]
+					if err := analyzer.ApplyFix(issue); err != nil {
+						m.statusMsg = "❌ Fix failed: " + err.Error()
+					} else {
+						m.statusMsg = fmt.Sprintf("✅ Remediation comment applied to %s:%d", issue.FilePath, issue.LineNumber)
+					}
+				}
+				m.showFixModal = false
+			case "n", "esc":
+				m.statusMsg = "Fix cancelled — no files changed."
+				m.showFixModal = false
+			}
+			return m, nil
+		}
+
+		if m.showPromptModal {
+			switch msg.String() {
+			case "p", "esc", "enter":
+				m.showPromptModal = false
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
@@ -122,9 +159,55 @@ func (m InspoCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.issues)-1 {
 				m.cursor++
 			}
+		case "f":
+			if len(m.issues) > 0 {
+				before, after, err := analyzer.PreviewFix(m.issues[m.cursor])
+				if err != nil {
+					m.fixErr = err.Error()
+				} else {
+					m.fixErr = ""
+					m.fixBefore = before
+					m.fixAfter = after
+				}
+				m.showFixModal = true
+			}
+		case "p":
+			if len(m.issues) > 0 {
+				issue := m.issues[m.cursor]
+				prompt := buildClaudeCodePrompt(issue)
+				m.promptText = prompt
+				if err := copyToClipboard(prompt); err != nil {
+					m.statusMsg = "📋 Prompt ready below (clipboard unavailable: " + err.Error() + ")"
+				} else {
+					m.statusMsg = "📋 Prompt copied to clipboard — no files were modified."
+				}
+				m.showPromptModal = true
+			}
 		}
 	}
 	return m, nil
+}
+
+// buildClaudeCodePrompt drafts a ready-to-run instruction for Claude Code
+// (or any coding assistant) to perform the actual semantic refactor —
+// hoisting the call out of the loop — that this analyzer intentionally
+// won't attempt to automate itself.
+func buildClaudeCodePrompt(issue analyzer.Issue) string {
+	return fmt.Sprintf(
+		"Refactor %s:%d to fix a FinOps-Guard finding (%s, rule %s).\n"+
+			"The %s call below is inside a loop and will be billed once per iteration. "+
+			"Move it outside the loop and batch its parameters across iterations where possible, "+
+			"without changing the function's external behavior.\n\nFlagged line:\n%s",
+		issue.FilePath, issue.LineNumber, issue.RuleName, issue.ID, issue.TargetAPI, issue.CodeSnippet,
+	)
+}
+
+// copyToClipboard shells out to pbcopy (macOS). If it's unavailable, the
+// prompt is still shown on screen — only the clipboard copy is best-effort.
+func copyToClipboard(text string) error {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }
 
 // Procedural Doom Fire Particle Physics Engine
@@ -284,6 +367,13 @@ func (m InspoCanvasModel) renderCFOBanner() string {
 }
 
 func (m InspoCanvasModel) View() string {
+	if m.showFixModal {
+		return m.renderFixModal()
+	}
+	if m.showPromptModal {
+		return m.renderPromptModal()
+	}
+
 	var doc strings.Builder
 
 	// 1. Termflix particle canvas
@@ -302,11 +392,62 @@ func (m InspoCanvasModel) View() string {
 	// 3. Virtual CFO persona banner, pinned at the bottom
 	doc.WriteString(m.renderCFOBanner() + "\n")
 
-	statusLine := fmt.Sprintf(" BURN: $%.2f / $%.2f │ FRAME: %04d │ [↑/↓] select │ [q] quit ",
+	statusTag := "STATUS: SAFE"
+	statusColor := green
+	if m.totalRisk > m.threshold {
+		statusTag = "STATUS: BREACHED"
+		statusColor = pink
+	}
+	statusPill := lipgloss.NewStyle().Bold(true).Foreground(white).Background(statusColor).Padding(0, 1).Render(statusTag)
+
+	statusLine := fmt.Sprintf(" BURN: $%.2f / $%.2f │ FRAME: %04d │ [↑/↓] select  [f] fix  [p] prompt  [q] quit ",
 		m.totalRisk, m.threshold, m.frameCount)
-	doc.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#888888")).Render(statusLine))
+	doc.WriteString(statusPill + lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#888888")).Render(statusLine))
+
+	if m.statusMsg != "" {
+		doc.WriteString("\n" + lipgloss.NewStyle().Foreground(white).Render(m.statusMsg))
+	}
 
 	return doc.String()
+}
+
+// renderFixModal shows the Before/After remediation-comment preview. It
+// takes over the whole screen while open — the developer must press y to
+// apply, or n/esc to cancel; nothing else is reachable until then.
+func (m InspoCanvasModel) renderFixModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(pink).Render("⚠️  CONFIRM REFACTOR PREVIEW")
+
+	if m.fixErr != "" {
+		body := lipgloss.NewStyle().Foreground(pink).Render("Error loading preview: " + m.fixErr)
+		return quoteBox.Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", "[esc] close"))
+	}
+
+	beforeBlock := lipgloss.NewStyle().Foreground(gray).Render("BEFORE:\n" + m.fixBefore)
+	afterBlock := lipgloss.NewStyle().Foreground(green).Render("AFTER:\n" + m.fixAfter)
+	note := lipgloss.NewStyle().Italic(true).Foreground(gray).Render(
+		"This only inserts an advisory comment above the flagged line — it does not rewrite the loop logic.")
+	footer := lipgloss.NewStyle().Bold(true).Render("[y] apply    [n / esc] cancel")
+
+	width := m.width - 4
+	if width < 40 {
+		width = 40
+	}
+	return quoteBox.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, title, "", beforeBlock, "", afterBlock, "", note, "", footer))
+}
+
+// renderPromptModal shows the ready-to-run Claude Code prompt. It never
+// modifies any source file — it only displays and (best-effort) copies text.
+func (m InspoCanvasModel) renderPromptModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(white).Render("📋 CLAUDE CODE PROMPT")
+	note := lipgloss.NewStyle().Foreground(green).Render(m.statusMsg)
+	body := lipgloss.NewStyle().Foreground(white).Render(m.promptText)
+	footer := lipgloss.NewStyle().Italic(true).Render("No files were modified. [esc / p] close")
+
+	width := m.width - 4
+	if width < 40 {
+		width = 40
+	}
+	return quoteBox.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, title, note, "", body, "", footer))
 }
 
 // RunInspoCanvasTUI launches the Termflix particle canvas dashboard with the

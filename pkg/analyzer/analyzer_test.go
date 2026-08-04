@@ -3,6 +3,7 @@ package analyzer_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/your-username/finops-guard/pkg/analyzer"
@@ -81,5 +82,72 @@ function queryLogs(ids: string[]) {
 				}
 			}
 		})
+	}
+}
+
+func TestPreviewFixAndApplyFix(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "loop.py")
+	original := `import openai
+
+def process_items(items):
+    for item in items:
+        response = openai.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": item}])
+        print(response)
+`
+	if err := os.WriteFile(filePath, []byte(original), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	issues, err := analyzer.ScanFile(filePath, analyzer.GetDefaultRules())
+	if err != nil {
+		t.Fatalf("unexpected error scanning file: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues))
+	}
+	issue := issues[0]
+
+	before, after, err := analyzer.PreviewFix(issue)
+	if err != nil {
+		t.Fatalf("PreviewFix() unexpected error: %v", err)
+	}
+	if !strings.Contains(before, "openai.chat.completions.create") {
+		t.Errorf("PreviewFix() before snippet missing flagged line: %q", before)
+	}
+	if strings.Contains(before, "FINOPS-GUARD") {
+		t.Errorf("PreviewFix() before snippet should not contain the remediation comment: %q", before)
+	}
+	if !strings.Contains(after, "FINOPS-GUARD") {
+		t.Errorf("PreviewFix() after snippet should contain the remediation comment: %q", after)
+	}
+
+	// PreviewFix must not touch the file on disk.
+	unchanged, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed to re-read file: %v", err)
+	}
+	if string(unchanged) != original {
+		t.Errorf("PreviewFix() modified the file on disk, want it untouched")
+	}
+
+	if err := analyzer.ApplyFix(issue); err != nil {
+		t.Fatalf("ApplyFix() unexpected error: %v", err)
+	}
+
+	fixed, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed to read fixed file: %v", err)
+	}
+
+	lines := strings.Split(string(fixed), "\n")
+	if len(lines) != strings.Count(original, "\n")+1+1 {
+		t.Fatalf("ApplyFix() expected exactly one inserted line, got %d lines: %q", len(lines), string(fixed))
+	}
+	if !strings.Contains(lines[issue.LineNumber-1], "FINOPS-GUARD") {
+		t.Errorf("ApplyFix() expected the remediation comment at line %d, got %q", issue.LineNumber, lines[issue.LineNumber-1])
+	}
+	if !strings.Contains(lines[issue.LineNumber], "openai.chat.completions.create") {
+		t.Errorf("ApplyFix() expected the original flagged line right after the comment, got %q", lines[issue.LineNumber])
 	}
 }
