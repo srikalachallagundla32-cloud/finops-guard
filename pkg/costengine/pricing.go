@@ -77,3 +77,39 @@ func (c *PricingCatalog) CalculateLLMLoopCost(model string, inputTokens, outputT
 
 	return costPerCall * float64(estimatedIterations)
 }
+
+// CalculateAthenaQueryCost estimates the cost of one Athena query at the
+// billing-minimum bytes scanned.
+func (c *PricingCatalog) CalculateAthenaQueryCost() float64 {
+	tbScanned := c.PricingData.AmazonAthena.MinimumBytesPerQuery / 1e12
+	return tbScanned * c.PricingData.AmazonAthena.CostPerTBScanned
+}
+
+// CalculateDynamoDBWriteCost estimates the cost of a single DynamoDB write
+// request unit.
+func (c *PricingCatalog) CalculateDynamoDBWriteCost() float64 {
+	return c.PricingData.AmazonDynamoDB.CostPerMillionWRU / 1e6
+}
+
+const (
+	defaultCallInputTokens  = 1000
+	defaultCallOutputTokens = 500
+)
+
+// EstimateCallCost estimates the cost of a single call to targetAPI
+// ("openai", "anthropic", "athena", or "dynamodb"), using default assumed
+// token counts for LLM calls and billing-minimum units for cloud APIs.
+func (c *PricingCatalog) EstimateCallCost(targetAPI string) float64 {
+	switch targetAPI {
+	case "openai":
+		return c.CalculateLLMLoopCost("gpt-4o", defaultCallInputTokens, defaultCallOutputTokens, 1)
+	case "anthropic":
+		return c.CalculateLLMLoopCost("claude-3-5-sonnet", defaultCallInputTokens, defaultCallOutputTokens, 1)
+	case "athena":
+		return c.CalculateAthenaQueryCost()
+	case "dynamodb":
+		return c.CalculateDynamoDBWriteCost()
+	default:
+		return 0
+	}
+}
