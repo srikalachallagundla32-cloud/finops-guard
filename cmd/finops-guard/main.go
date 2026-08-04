@@ -7,7 +7,12 @@ import (
 
 	"github.com/your-username/finops-guard/pkg/analyzer"
 	"github.com/your-username/finops-guard/pkg/costengine"
+	"github.com/your-username/finops-guard/pkg/ui"
 )
+
+// costFailThreshold mirrors settings.fail_on_cost_threshold in .finops-guard.yml.
+// TODO: load this from .finops-guard.yml instead of hardcoding it here.
+const costFailThreshold = 50.00
 
 func main() {
 	pricingPath := flag.String("pricing", "pricing.json", "Path to the pricing catalog JSON file")
@@ -35,22 +40,23 @@ func main() {
 		return
 	}
 
-	fmt.Printf("\n🔍 Scanning %s for loop-bound API calls...\n", *scanPath)
 	issues, err := analyzer.ScanFile(*scanPath, analyzer.GetDefaultRules())
 	if err != nil {
 		fmt.Printf("❌ [Error] Scanning file: %v\n", err)
 		os.Exit(1)
 	}
 
-	if len(issues) == 0 {
-		fmt.Println("✅ No loop-bound API risks detected.")
-		return
+	var totalRisk float64
+	for _, issue := range issues {
+		totalRisk += issue.EstCostRisk
 	}
 
-	fmt.Printf("🚨 %d issue(s) found:\n", len(issues))
-	for _, issue := range issues {
-		fmt.Printf("  [%s] %s:%d (%s, severity=%s)\n      %s\n",
-			issue.ID, issue.FilePath, issue.LineNumber, issue.TargetAPI, issue.Severity, issue.CodeSnippet)
+	if err := ui.RunFinalTUI(issues, totalRisk, costFailThreshold); err != nil {
+		fmt.Printf("❌ [Error] Running interactive TUI: %v\n", err)
+		os.Exit(1)
 	}
-	os.Exit(1)
+
+	if len(issues) > 0 {
+		os.Exit(1)
+	}
 }
