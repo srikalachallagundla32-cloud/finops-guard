@@ -1,0 +1,26 @@
+name: 'FinOps-Guard'
+description: 'Shift-left static cost analysis for loop-bound cloud & LLM API calls.'
+author: 'srikalachallagundla32-cloud'
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  scan-path:
+    description: 'File to scan for loop-bound cloud/LLM API calls.'
+    required: true
+    default: 'test/testdata/ai_slop_sample.py'
+  pricing-file:
+    description: 'Path to the pricing catalog JSON file.'
+    required: false
+    default: 'pricing.json'
+
+runs:
+  using: 'docker'
+  # Dockerfile lives at the repo root, one level up from this action
+  # definition, since it needs the full module (go.mod, cmd/, pkg/) as
+  # build context — not just the contents of .github/.
+  image: '../Dockerfile'
+  args:
+    - '--pricing=${{ inputs.pricing-file }}'
+    - '--scan=${{ inputs.scan-path }}'
