@@ -29,29 +29,36 @@ type DetectionRule struct {
 	Pattern   *regexp.Regexp
 }
 
-// GetDefaultRules returns the built-in rule set for loop-bound cloud/LLM API calls.
+// GetDefaultRules returns extended regex rules for LLM, AWS Athena, and DynamoDB.
 func GetDefaultRules() []DetectionRule {
 	return []DetectionRule{
 		{
 			ID:        "FG-001",
-			Name:      "LLM-API-In-Loop-OpenAI",
+			Name:      "OpenAI API Call in Loop",
 			Severity:  "HIGH",
-			TargetAPI: "openai.chat.completions",
-			Pattern:   regexp.MustCompile(`(?i)(openai\.(chat\.completions|ChatCompletion)\.create|client\.chat\.completions\.create)\s*\(`),
+			TargetAPI: "openai",
+			Pattern:   regexp.MustCompile(`(openai\.(ChatCompletion|chat\.completions|client\.chat\.completions)\.create|client\.messages\.create)`),
 		},
 		{
 			ID:        "FG-002",
-			Name:      "LLM-API-In-Loop-Anthropic",
+			Name:      "Anthropic API Call in Loop",
 			Severity:  "HIGH",
-			TargetAPI: "anthropic.messages",
-			Pattern:   regexp.MustCompile(`(?i)(anthropic\.messages\.create|client\.messages\.create)\s*\(`),
+			TargetAPI: "anthropic",
+			Pattern:   regexp.MustCompile(`(anthropic\.(messages|completions)\.create|client\.messages\.create)`),
 		},
 		{
 			ID:        "FG-003",
-			Name:      "Cloud-API-In-Loop-Athena",
+			Name:      "AWS Athena Query Execution in Loop",
+			Severity:  "CRITICAL",
+			TargetAPI: "athena",
+			Pattern:   regexp.MustCompile(`(athena\.start_query_execution|boto3\.client\('athena'\)|AthenaClient\.startQueryExecution)`),
+		},
+		{
+			ID:        "FG-004",
+			Name:      "DynamoDB Write Operations in Async Loop",
 			Severity:  "HIGH",
-			TargetAPI: "athena.start_query_execution",
-			Pattern:   regexp.MustCompile(`(?i)athena\.start_query_execution\s*\(`),
+			TargetAPI: "dynamodb",
+			Pattern:   regexp.MustCompile(`(dynamodb\.(put_item|batch_write_item)|docClient\.send\(new PutItemCommand)`),
 		},
 	}
 }

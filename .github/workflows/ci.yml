@@ -1,0 +1,33 @@
+name: CI & FinOps Guardrail Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-build:
+    name: Build, Test & Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install Dependencies
+        run: go mod download
+
+      - name: Run Unit Tests with Coverage
+        run: go test -v -cover ./...
+
+      - name: Build FinOps-Guard Binary
+        run: go build -o bin/finops-guard cmd/finops-guard/main.go
+
+      - name: Execute Self-Scan (Dry Run)
+        run: ./bin/finops-guard --pricing=pricing.json --scan=test/testdata/ai_slop_sample.py || true
