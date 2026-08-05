@@ -155,7 +155,7 @@ func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath, repoURL, com
 
 	// Real, clickable links row (these work — unlike the painted ↗ in the image).
 	if repoURL != "" {
-		bestPractices := repoURL + "/blob/main/docs/COST_BEST_PRACTICES.md"
+		bestPractices := fmt.Sprintf("%s/blob/%s/docs/COST_BEST_PRACTICES.md", repoURL, ref)
 		buf.WriteString(fmt.Sprintf("**📄 [View flagged line](%s)** · 📚 [Cost best practices](%s) · 📖 [Repo](%s)\n\n",
 			fileLink, bestPractices, repoURL))
 	}
