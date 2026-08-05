@@ -14,12 +14,17 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       checks: write
       pull-requests: write
 
     steps:
+      # Check out the real head branch (not the PR merge ref) so the burn-meter
+      # commit-back can fast-forward push back to it.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -32,64 +37,192 @@ jobs:
       - name: Scan codebase
         id: scan
         run: |
+          # The card image is hosted on a dedicated finops-assets branch (keyed
+          # by PR number) so the PR branch head never changes — keeping checks
+          # valid and the commit history clean.
+          SLOT="pr-${{ github.event.pull_request.number || 'main' }}"
+          SVG_URL="https://raw.githubusercontent.com/${{ github.repository }}/finops-assets/${SLOT}/burn.svg"
+
+          # Scan the largest application source file, deterministically,
+          # ignoring vendored deps and test fixtures (which aren't shipped code).
+          TARGET=$(find . -type f \( -name '*.py' -o -name '*.ts' -o -name '*.js' \) \
+            -not -path './vendor/*' -not -path './node_modules/*' \
+            -not -path './test/*' -not -path '*/testdata/*' \
+            -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+          echo "Scanning: ${TARGET:-<none>}"
+
+          mkdir -p assets
           ./bin/finops-guard \
             --pricing=pricing.json \
-            --scan=$(find . -name '*.py' -o -name '*.ts' -o -name '*.js' | head -1) \
-            --output-svg=burn.svg \
+            --scan="${TARGET:-test/testdata/ai_slop_sample.py}" \
+            --output-svg=assets/burn.svg \
+            --svg-url="$SVG_URL" \
             --generate-pr-comment \
-            --no-tui > comment.md 2>&1 || true
+            --findings-json=findings.json \
+            --no-tui > raw.md 2>err.log || true
 
-      - name: Post PR Comment
+          # The comment is everything from the hidden marker onward (drops CLI banner).
+          sed -n '/<!-- finops-guard-comment -->/,$p' raw.md > comment.md
+          test -s comment.md || cp raw.md comment.md
+          echo "----- comment.md -----"; cat comment.md
+          echo "----- findings.json -----"; cat findings.json 2>/dev/null || echo "[]"
+
+      - name: Publish burn meter to assets branch
+        env:
+          PRN: ${{ github.event.pull_request.number }}
+        run: |
+          BR=finops-assets
+          DEST="pr-${PRN:-main}"
+          git config user.name  "finops-guard[bot]"
+          git config user.email "finops-guard@users.noreply.github.com"
+          git fetch origin "$BR" 2>/dev/null || true
+
+          tmp="$(mktemp -d)"
+          if git show-ref --verify --quiet "refs/remotes/origin/$BR"; then
+            git worktree add "$tmp" "origin/$BR"
+            git -C "$tmp" checkout -B "$BR"
+          else
+            git worktree add --detach "$tmp" HEAD
+            git -C "$tmp" checkout --orphan "$BR"
+            git -C "$tmp" rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          mkdir -p "$tmp/$DEST"
+          cp assets/burn.svg "$tmp/$DEST/burn.svg"
+          git -C "$tmp" add "$DEST/burn.svg"
+          if git -C "$tmp" diff --cached --quiet; then
+            echo "Burn meter unchanged."
+          else
+            git -C "$tmp" commit -m "chore(finops): burn meter for $DEST"
+            git -C "$tmp" push origin "HEAD:$BR"
+          fi
+
+      - name: Post / update PR comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const comment = fs.readFileSync('comment.md', 'utf8');
+            const body = fs.readFileSync('comment.md', 'utf8');
+            const marker = '<!-- finops-guard-comment -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
 
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
+            // Collect every past finops comment (marker or legacy signatures),
+            // update one in place, and delete the rest so the thread stays to a
+            // single clean comment.
+            const sigs = [marker, 'finops-guard — cost check', 'SAFE TO MERGE', 'WANTED:'];
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100
+            });
+            const ours = comments.filter(c =>
+              c.user && c.user.type === 'Bot' && c.body && sigs.some(s => c.body.includes(s)));
+
+            let keep = ours.find(c => c.body.includes(marker)) || ours[0];
+            if (keep) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: keep.id, body });
+            } else {
+              const created = await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              keep = created.data;
+            }
+            for (const c of ours) {
+              if (c.id !== keep.id) {
+                try { await github.rest.issues.deleteComment({ owner, repo, comment_id: c.id }); }
+                catch (e) { core.warning(`Could not delete stale comment ${c.id}: ${e.message}`); }
+              }
+            }
+
+      - name: Post fix suggestions
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let findings = [];
+            try { findings = JSON.parse(fs.readFileSync('findings.json', 'utf8')); } catch (e) {}
+            if (!findings.length) return;
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const commit_id = context.payload.pull_request.head.sha;
+            const sMarker = '<!-- finops-guard-suggestion -->';
+
+            // Existing review comments, to avoid duplicate suggestions on re-run.
+            const existing = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner, repo, pull_number, per_page: 100
             });
 
+            for (const f of findings) {
+              const path = f.file.replace(/^\.\//, '');
+              const already = existing.some(c =>
+                c.path === path && c.line === f.line && c.body && c.body.includes(sMarker));
+              if (already) continue;
+
+              const body =
+                `${sMarker}\n**finops-guard** — annotate this loop-bound \`${f.target_api}\` call ` +
+                `so the cost risk is flagged in code before merge:\n\n` +
+                '```suggestion\n' + f.suggestion + '\n```\n';
+
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner, repo, pull_number, commit_id, path,
+                  line: f.line, side: 'RIGHT', body
+                });
+              } catch (e) {
+                core.warning(`Could not attach suggestion at ${path}:${f.line} — ${e.message}`);
+              }
+            }
+
       - name: Create Check Run
-        if: github.event_name == 'push'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const output = fs.readFileSync('comment.md', 'utf8');
 
-            // Determine status from output
             let conclusion = 'success';
-            let status_text = '✅ finops-guard — the CFO sleeps soundly';
-
-            if (output.includes('BUDGET ALERT') || output.includes('APPROACHING LIMIT')) {
-              conclusion = 'neutral';
-              status_text = '⚠️  finops-guard — the CFO is pacing';
-            } else if (output.includes('BUDGET EXCEEDED')) {
+            let name = '✅ finops-guard — the CFO sleeps soundly';
+            if (output.includes('over budget')) {
               conclusion = 'failure';
-              status_text = '❌ finops-guard — the CFO has fainted';
+              name = '❌ finops-guard — the CFO has fainted';
+            } else if (output.includes('near budget limit') || output.includes('approaching budget')) {
+              conclusion = 'neutral';
+              name = '⚠️ finops-guard — the CFO is pacing';
             }
 
-            github.rest.checks.create({
+            const sha = context.payload.pull_request
+              ? context.payload.pull_request.head.sha
+              : context.sha;
+
+            await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: status_text,
-              head_sha: context.sha,
+              name: name,
+              head_sha: sha,
               status: 'completed',
               conclusion: conclusion,
-              output: {
-                title: 'Cost Analysis',
-                summary: output.split('\n').slice(0, 10).join('\n')
-              }
+              output: { title: 'Cost Analysis', summary: output }
             });
 
-      - name: Upload SVG
+      # On merges to a tracked branch, stamp the commit with a cost note so
+      # `git log --notes=refs/notes/finops` becomes a spend ledger (Phase 5).
+      - name: Record spend note
+        if: github.event_name == 'push'
+        run: |
+          TARGET=$(find . -type f \( -name '*.py' -o -name '*.ts' -o -name '*.js' \) \
+            -not -path './vendor/*' -not -path './node_modules/*' \
+            -not -path './test/*' -not -path '*/testdata/*' \
+            -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -n "$TARGET" ]; then
+            git config user.name  "finops-guard[bot]"
+            git config user.email "finops-guard@users.noreply.github.com"
+            ./scripts/finops-ledger.sh record "$TARGET" "${{ github.sha }}" || true
+            ./scripts/finops-ledger.sh push || true
+          fi
+
+      - name: Upload SVG artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: burn-meter
-          path: burn.svg
+          path: assets/burn.svg

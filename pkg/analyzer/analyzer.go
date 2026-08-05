@@ -241,6 +241,19 @@ func PreviewFix(issue Issue) (before string, after string, err error) {
 	return before, after, nil
 }
 
+// SuggestionBlock returns the replacement text for a committable GitHub review
+// suggestion anchored to the flagged line: the remediation comment inserted
+// above, followed by the original line, both preserving indentation. This is
+// the same conservative edit ApplyFix performs (a warning annotation, never a
+// speculative refactor), packaged for a one-click "Commit suggestion".
+func SuggestionBlock(issue Issue) (replacement string, err error) {
+	lines, insertIdx, comment, err := fixPlan(issue)
+	if err != nil {
+		return "", err
+	}
+	return comment + "\n" + lines[insertIdx], nil
+}
+
 // ApplyFix inserts the FinOps-Guard remediation comment directly above the
 // flagged line and writes the file back to disk, preserving its existing
 // file mode. Callers must obtain developer confirmation before calling this
