@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/your-username/finops-guard/internal/tui"
 	"github.com/your-username/finops-guard/pkg/analyzer"
@@ -54,11 +55,13 @@ func main() {
 		return
 	}
 
+	scanStart := time.Now()
 	issues, err := analyzer.ScanFile(*scanPath, analyzer.GetDefaultRules())
 	if err != nil {
 		fmt.Printf("❌ [Error] Scanning file: %v\n", err)
 		os.Exit(1)
 	}
+	analysisSeconds := time.Since(scanStart).Seconds()
 
 	var totalRisk float64
 	for i := range issues {
@@ -75,24 +78,30 @@ func main() {
 			Threshold:  costFailThreshold,
 			IssueCount: len(issues),
 		}
-		if err := ui.GenerateBurnSVG(meter, *outputSVG); err != nil {
+
+		// Convert issues to the richer ui.Issue used by the card + comment.
+		commentIssues := make([]ui.Issue, len(issues))
+		for i, issue := range issues {
+			commentIssues[i] = ui.Issue{
+				ID:          issue.ID,
+				FilePath:    issue.FilePath,
+				LineNumber:  issue.LineNumber,
+				RuleName:    issue.RuleName,
+				EstCostRisk: issue.EstCostRisk,
+				TargetAPI:   issue.TargetAPI,
+				Severity:    issue.Severity,
+				CodeSnippet: issue.CodeSnippet,
+			}
+		}
+
+		if err := ui.GenerateCardSVG(meter, commentIssues, analysisSeconds, *outputSVG); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ [Error] Generating SVG: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "✅ Generated SVG burn meter: %s\n", *outputSVG)
+		fmt.Fprintf(os.Stderr, "✅ Generated FinOps card: %s\n", *outputSVG)
 
 		// Generate PR comment if requested
 		if *generatePRComment {
-			// Convert issues to ui.Issue for comment generation
-			commentIssues := make([]ui.Issue, len(issues))
-			for i, issue := range issues {
-				commentIssues[i] = ui.Issue{
-					FilePath:    issue.FilePath,
-					LineNumber:  issue.LineNumber,
-					RuleName:    issue.RuleName,
-					EstCostRisk: issue.EstCostRisk,
-				}
-			}
 			imgSrc := "./" + *outputSVG
 			if *svgURL != "" {
 				imgSrc = *svgURL
