@@ -57,6 +57,8 @@ jobs:
             --scan="${TARGET:-test/testdata/ai_slop_sample.py}" \
             --output-svg=assets/burn.svg \
             --svg-url="$SVG_URL" \
+            --repo-url="${{ github.server_url }}/${{ github.repository }}" \
+            --commit-sha="${{ github.event.pull_request.head.sha || github.sha }}" \
             --generate-pr-comment \
             --findings-json=findings.json \
             --no-tui > raw.md 2>err.log || true

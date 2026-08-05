@@ -27,6 +27,8 @@ func main() {
 	svgURL := flag.String("svg-url", "", "Absolute URL for the SVG image in the PR comment (falls back to ./<output-svg> when empty)")
 	findingsJSON := flag.String("findings-json", "", "Write findings (with committable suggestion text) to a JSON file for the CI suggestion step")
 	emitNote := flag.Bool("note", false, "Print a one-line spend-ledger note for git notes (no other output), then exit")
+	repoURL := flag.String("repo-url", "", "Repository URL (e.g. https://github.com/owner/repo) for clickable links in the PR comment")
+	commitSHA := flag.String("commit-sha", "", "Commit SHA used to build the 'View flagged line' link")
 	flag.Parse()
 
 	// In --note mode, stdout must be a single clean ledger line: route all
@@ -122,7 +124,7 @@ func main() {
 			if *svgURL != "" {
 				imgSrc = *svgURL
 			}
-			prComment := ui.GeneratePRComment(meter, commentIssues, imgSrc)
+			prComment := ui.GeneratePRComment(meter, commentIssues, imgSrc, *repoURL, *commitSHA)
 			fmt.Println(prComment)
 		}
 

@@ -120,7 +120,7 @@ const CommentMarker = "<!-- finops-guard-comment -->"
 // and a pointer to the committable fix suggestion. GitHub strips HTML/CSS
 // layout, so all the rich visual structure lives in the card image; the
 // markdown here stays minimal and copy-friendly.
-func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) string {
+func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath, repoURL, commitSHA string) string {
 	var buf strings.Builder
 
 	buf.WriteString(CommentMarker + "\n")
@@ -133,6 +133,20 @@ func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) strin
 	}
 
 	sort.Slice(issues, func(i, j int) bool { return issues[i].EstCostRisk > issues[j].EstCostRisk })
+	top := issues[0]
+
+	// Real, clickable links (the ↗ affordances inside the card image are only
+	// painted — these are the working ones).
+	if repoURL != "" {
+		ref := commitSHA
+		if ref == "" {
+			ref = "HEAD"
+		}
+		fileLink := fmt.Sprintf("%s/blob/%s/%s#L%d", repoURL, ref, strings.TrimPrefix(top.FilePath, "./"), top.LineNumber)
+		bestPractices := repoURL + "/blob/main/docs/COST_BEST_PRACTICES.md"
+		buf.WriteString(fmt.Sprintf("📄 [View flagged line](%s) · 📚 [Cost best practices](%s) · 📖 [Repo](%s)\n\n",
+			fileLink, bestPractices, repoURL))
+	}
 
 	// Accessible / copy-friendly text fallback (the image isn't selectable).
 	buf.WriteString("<details><summary>Text summary (accessibility)</summary>\n\n")
@@ -146,8 +160,7 @@ func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) strin
 	buf.WriteString("\n<sub>¹ if this call runs ~1,000 iterations, 30 times/month.</sub>\n")
 	buf.WriteString("</details>\n\n")
 
-	top := issues[0]
-	buf.WriteString(fmt.Sprintf("🔧 A one-click **Commit suggestion** to flag `%s:%d` is attached as a review comment on that line.\n",
+	buf.WriteString(fmt.Sprintf("🔧 A one-click **Commit suggestion** to flag `%s:%d` is attached as a review comment on that line (visible on open PRs).\n",
 		top.FilePath, top.LineNumber))
 
 	return buf.String()
@@ -300,18 +313,28 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 	s.WriteString(fmt.Sprintf(`<path d="M53 62 l5 5 l9 -11" fill="none" stroke="%s" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`, decisionColor))
 	s.WriteString(txt(84, 70, 22, decisionColor, "start", "bold", decision))
 
-	// ---- Gauge ----
+	// ---- Gauge (real meter: dim track + value-proportional fill + knob) ----
 	cx, cy, R := 370.0, 380.0, 170.0
-	theta := math.Pi * ratio
+	// A tiny floor so the fill is always visible even at ~0 cost.
+	fillRatio := ratio
+	if fillRatio < 0.02 {
+		fillRatio = 0.02
+	}
+	theta := math.Pi * fillRatio
 	dotX := cx - R*math.Cos(theta)
 	dotY := cy - R*math.Sin(theta)
+	// Dim full-scale track.
 	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="#21262d" stroke-width="16" stroke-linecap="round"/>`,
 		cx-R, cy, R, R, cx+R, cy))
-	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="url(#gg)" stroke-width="16" stroke-linecap="round"/>`,
-		cx-R, cy, R, R, cx+R, cy))
-	// value marker: a dot riding on the arc (no center needle — it would cross
-	// the cost text at low ratios).
-	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="11" fill="%s" stroke="%s" stroke-width="4"/>`, dotX, dotY, statusColor, cBg))
+	// Colored fill from 0%% up to the current value (large-arc flag set past 50%%).
+	largeArc := 0
+	if fillRatio > 0.5 {
+		largeArc = 1
+	}
+	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 %d 1 %.1f %.1f" fill="none" stroke="%s" stroke-width="16" stroke-linecap="round"/>`,
+		cx-R, cy, R, R, largeArc, dotX, dotY, statusColor))
+	// Prominent value knob at the fill head.
+	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="13" fill="%s" stroke="%s" stroke-width="4"/>`, dotX, dotY, statusColor, cBg))
 	// center cost
 	s.WriteString(txt(cx, cy-18, 46, statusColor, "middle", "bold", fmt.Sprintf("$%.2f", meter.TotalRisk)))
 	s.WriteString(txt(cx, cy+14, 22, cMuted, "middle", "", fmt.Sprintf("/ $%.2f", meter.Threshold)))
