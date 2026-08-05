@@ -61,7 +61,7 @@ func main() {
 
 	costFailThreshold := config.FailOnCostThreshold(guardConfigPath)
 
-	if err := ui.RunInspoCanvasTUI(issues, totalRisk, costFailThreshold); err != nil {
+	if err := ui.RunNeonBurnTUI(issues, totalRisk, costFailThreshold); err != nil {
 		fmt.Printf("❌ [Error] Running interactive TUI: %v\n", err)
 		os.Exit(1)
 	}
