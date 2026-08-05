@@ -120,19 +120,45 @@ const CommentMarker = "<!-- finops-guard-comment -->"
 // and a pointer to the committable fix suggestion. GitHub strips HTML/CSS
 // layout, so all the rich visual structure lives in the card image; the
 // markdown here stays minimal and copy-friendly.
-func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) string {
+func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath, repoURL, commitSHA string) string {
 	var buf strings.Builder
 
 	buf.WriteString(CommentMarker + "\n")
-	buf.WriteString("**FinOps analysis complete for this Pull Request** 🚀\n\n")
-	buf.WriteString(fmt.Sprintf("<img src=\"%s\" width=\"860\" alt=\"FinOps-Guard cost analysis card\" />\n\n", svgPath))
+
+	sort.Slice(issues, func(i, j int) bool { return issues[i].EstCostRisk > issues[j].EstCostRisk })
+
+	// Build the file link up front so the whole card can point at the flagged code.
+	ref := commitSHA
+	if ref == "" {
+		ref = "HEAD"
+	}
+	var fileLink string
+	if repoURL != "" && len(issues) > 0 {
+		fileLink = fmt.Sprintf("%s/blob/%s/%s#L%d", repoURL, ref, strings.TrimPrefix(issues[0].FilePath, "./"), issues[0].LineNumber)
+	}
+
+	img := fmt.Sprintf("<img src=\"%s\" width=\"860\" alt=\"FinOps-Guard cost analysis card\" />", svgPath)
+	if fileLink != "" {
+		// Make the whole card clickable → opens the flagged file (the intuitive
+		// action; painted buttons inside the image are never clickable).
+		buf.WriteString(fmt.Sprintf("<a href=\"%s\">%s</a>\n\n", fileLink, img))
+	} else {
+		buf.WriteString(img + "\n\n")
+	}
 
 	if len(issues) == 0 {
 		buf.WriteString("_No loop-bound API calls detected — safe to merge._\n")
 		return buf.String()
 	}
 
-	sort.Slice(issues, func(i, j int) bool { return issues[i].EstCostRisk > issues[j].EstCostRisk })
+	top := issues[0]
+
+	// Real, clickable links row (these work — unlike the painted ↗ in the image).
+	if repoURL != "" {
+		bestPractices := fmt.Sprintf("%s/blob/%s/docs/COST_BEST_PRACTICES.md", repoURL, ref)
+		buf.WriteString(fmt.Sprintf("**📄 [View flagged line](%s)** · 📚 [Cost best practices](%s) · 📖 [Repo](%s)\n\n",
+			fileLink, bestPractices, repoURL))
+	}
 
 	// Accessible / copy-friendly text fallback (the image isn't selectable).
 	buf.WriteString("<details><summary>Text summary (accessibility)</summary>\n\n")
@@ -146,8 +172,7 @@ func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) strin
 	buf.WriteString("\n<sub>¹ if this call runs ~1,000 iterations, 30 times/month.</sub>\n")
 	buf.WriteString("</details>\n\n")
 
-	top := issues[0]
-	buf.WriteString(fmt.Sprintf("🔧 A one-click **Commit suggestion** to flag `%s:%d` is attached as a review comment on that line.\n",
+	buf.WriteString(fmt.Sprintf("🔧 A one-click **Commit suggestion** to flag `%s:%d` is attached as a review comment on that line (visible on open PRs).\n",
 		top.FilePath, top.LineNumber))
 
 	return buf.String()
@@ -285,82 +310,127 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 			x, y, w, h, r, fill, stroke, sw)
 	}
 
-	var s strings.Builder
-	s.WriteString(`<svg width="1200" height="1120" viewBox="0 0 1200 1120" xmlns="http://www.w3.org/2000/svg">`)
-	s.WriteString(fmt.Sprintf(`<rect width="1200" height="1120" rx="14" fill="%s"/>`, cBg))
-	s.WriteString(fmt.Sprintf(`<rect x="4" y="4" width="1192" height="1112" rx="12" fill="none" stroke="%s" stroke-width="1.5"/>`, cBorder))
+	cPurple := "#a371f7"
 
-	// ---- Gauge gradient ----
-	s.WriteString(fmt.Sprintf(`<defs><linearGradient id="gg" x1="200" y1="380" x2="540" y2="380">`+
-		`<stop offset="0" stop-color="%s"/><stop offset="0.5" stop-color="%s"/><stop offset="1" stop-color="%s"/></linearGradient></defs>`,
-		cGreen, cYellow, cRed))
-
-	// ---- SAFE TO MERGE badge (top-left) ----
-	s.WriteString(fmt.Sprintf(`<circle cx="60" cy="62" r="13" fill="none" stroke="%s" stroke-width="2.5"/>`, decisionColor))
-	s.WriteString(fmt.Sprintf(`<path d="M53 62 l5 5 l9 -11" fill="none" stroke="%s" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`, decisionColor))
-	s.WriteString(txt(84, 70, 22, decisionColor, "start", "bold", decision))
-
-	// ---- Gauge ----
-	cx, cy, R := 370.0, 380.0, 170.0
-	theta := math.Pi * ratio
-	dotX := cx - R*math.Cos(theta)
-	dotY := cy - R*math.Sin(theta)
-	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="#21262d" stroke-width="16" stroke-linecap="round"/>`,
-		cx-R, cy, R, R, cx+R, cy))
-	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="url(#gg)" stroke-width="16" stroke-linecap="round"/>`,
-		cx-R, cy, R, R, cx+R, cy))
-	// value marker: a dot riding on the arc (no center needle — it would cross
-	// the cost text at low ratios).
-	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="11" fill="%s" stroke="%s" stroke-width="4"/>`, dotX, dotY, statusColor, cBg))
-	// center cost
-	s.WriteString(txt(cx, cy-18, 46, statusColor, "middle", "bold", fmt.Sprintf("$%.2f", meter.TotalRisk)))
-	s.WriteString(txt(cx, cy+14, 22, cMuted, "middle", "", fmt.Sprintf("/ $%.2f", meter.Threshold)))
-	// right-of-arc status
-	s.WriteString(txt(cx+R+40, cy-22, 26, statusColor, "start", "bold", statusWord))
-	s.WriteString(txt(cx+R+40, cy+6, 18, cMuted, "start", "", fmt.Sprintf("%.0f%%", ratio*100)))
-	s.WriteString(txt(cx+R+40, cy+28, 16, cMuted, "start", "", "used"))
-	// ticks
-	s.WriteString(txt(cx-R-6, cy+34, 15, cMuted, "middle", "", "0%"))
-	s.WriteString(txt(cx, cy-R-16, 15, cMuted, "middle", "", "50%"))
-	s.WriteString(txt(cx+R+6, cy+34, 15, cMuted, "middle", "", "100%"))
-
-	// ---- issue count pill (under gauge) ----
-	if len(issues) > 0 {
-		label := fmt.Sprintf("%d Issue Found • High Impact", len(issues))
-		if len(issues) > 1 {
-			label = fmt.Sprintf("%d Issues Found • High Impact", len(issues))
-		}
-		pw := 40.0 + float64(len(label))*8.2
-		s.WriteString(rrect(cx-pw/2, 448, pw, 40, 20, "#2d1618", "#f85149", 1))
-		s.WriteString(txt(cx, 473, 16, cRed, "middle", "bold", "⚠  "+label))
-	} else {
-		s.WriteString(rrect(cx-120, 448, 240, 40, 20, "#132a1a", cGreen, 1))
-		s.WriteString(txt(cx, 473, 16, cGreen, "middle", "bold", "✓  No blocking issues"))
+	// Status-driven mission message.
+	missionMsg := "You're in the green zone. Keep shipping! 🚀"
+	missionSub := fmt.Sprintf("%d issue(s) detected with low cost impact.", len(issues))
+	if len(issues) == 0 {
+		missionMsg = "All clear — nothing to burn. 🚀"
+		missionSub = "No loop-bound API calls detected."
+	} else if ratio > 0.9 {
+		missionMsg = "Budget breached — hold before merge."
+		missionSub = fmt.Sprintf("%d issue(s) with high cost impact.", len(issues))
+	} else if ratio > 0.6 {
+		missionMsg = "Costs climbing — review before merge."
+		missionSub = fmt.Sprintf("%d issue(s) with notable cost impact.", len(issues))
+	} else if ratio > 0.25 {
+		missionMsg = "Watch the burn — minor cost added."
+		missionSub = fmt.Sprintf("%d issue(s) with moderate cost impact.", len(issues))
 	}
-
-	// ---- PR FinOps Impact panel (top-right) ----
-	px, pw := 760.0, 410.0
-	s.WriteString(rrect(px, 45, pw, 430, 12, cPanel, cBorder, 1))
-	s.WriteString(txt(px+26, 90, 18, cText, "start", "bold", "PR FinOps Impact"))
-	rightX := px + pw - 26
-	row := func(y float64, label, value, valColor string) {
-		s.WriteString(txt(px+26, y, 15, cMuted, "start", "", label))
-		s.WriteString(txt(rightX, y, 15, valColor, "end", "bold", value))
-	}
-	row(140, "Estimated Monthly Cost Impact", "$"+humanMoney(monthlyImpact), cRed)
-	row(185, "Resources Affected", fmt.Sprintf("%d", len(issues)), cText)
-	row(230, "Potential Savings", "$"+humanMoney(monthlyImpact)+" / mo", cGreen)
-	analysis := "<1 sec"
+	analysis := "< 2 sec"
 	if analysisSeconds >= 1 {
 		analysis = fmt.Sprintf("%.0f sec", analysisSeconds)
 	}
-	row(275, "Analysis Time", analysis, cText)
-	s.WriteString(fmt.Sprintf(`<line x1="%.1f" y1="308" x2="%.1f" y2="308" stroke="%s" stroke-width="1"/>`, px+26, rightX, cBorder))
-	s.WriteString(txt(px+26, 345, 14, cMuted, "start", "", "This PR introduces a potential cost increase due to"))
-	s.WriteString(txt(px+26, 366, 14, cMuted, "start", "", "loop-bound API calls."))
-	s.WriteString(txt(px+26, 430, 14, "#58a6ff", "start", "", "Learn more in FinOps-Guard Docs ↗"))
+	panelFill := "#0d1526"
 
-	// ---- Issue panel + Recommended Action (only when there are findings) ----
+	var s strings.Builder
+	s.WriteString(`<svg width="1500" height="1180" viewBox="0 0 1500 1180" xmlns="http://www.w3.org/2000/svg">`)
+	s.WriteString(fmt.Sprintf(`<defs>`+
+		`<radialGradient id="space" cx="50%%" cy="34%%" r="85%%"><stop offset="0" stop-color="#13223e"/><stop offset="0.55" stop-color="#0a1020"/><stop offset="1" stop-color="#05070d"/></radialGradient>`+
+		`<linearGradient id="gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="%s"/><stop offset="0.5" stop-color="%s"/><stop offset="1" stop-color="%s"/></linearGradient>`+
+		`<radialGradient id="portal" cx="50%%" cy="50%%" r="50%%"><stop offset="0" stop-color="%s" stop-opacity="0.85"/><stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>`+
+		`<radialGradient id="orb" cx="40%%" cy="35%%" r="65%%"><stop offset="0" stop-color="#ff9a9a"/><stop offset="0.5" stop-color="#f85149"/><stop offset="1" stop-color="#4c0d10"/></radialGradient>`+
+		`<filter id="glow" x="-60%%" y="-60%%" width="220%%" height="220%%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`+
+		`</defs>`, cGreen, cYellow, cRed, cGreen, cGreen))
+	s.WriteString(`<rect width="1500" height="1180" rx="16" fill="url(#space)"/>`)
+	for i := 0; i < 70; i++ {
+		fi := float64(i)
+		stx := math.Mod(fi*137.508*7.31+fi*fi*3.7, 1500)
+		sty := math.Mod(fi*91.7+fi*fi*13.3, 1180)
+		str := 0.4 + math.Mod(fi*0.37, 1.4)
+		sto := 0.15 + math.Mod(fi*0.11, 0.55)
+		s.WriteString(fmt.Sprintf(`<circle cx="%.0f" cy="%.0f" r="%.1f" fill="#fff" opacity="%.2f"/>`, stx, sty, str, sto))
+	}
+	s.WriteString(fmt.Sprintf(`<rect x="5" y="5" width="1490" height="1170" rx="14" fill="none" stroke="%s" stroke-width="1.5"/>`, cBorder))
+	s.WriteString(txt(40, 62, 30, cText, "start", "bold", "FinOps analysis complete for this Pull Request 🚀"))
+
+	// ---- Mission Control panel ----
+	s.WriteString(rrect(30, 95, 740, 430, 16, panelFill, "#233149", 1))
+	s.WriteString(fmt.Sprintf(`<circle cx="58" cy="138" r="5" fill="%s"/>`, cGreen))
+	s.WriteString(txt(72, 143, 13, cGreen, "start", "bold", "MISSION CONTROL"))
+	s.WriteString(rrect(636, 122, 112, 30, 15, "#0b1a13", statusColor, 1))
+	s.WriteString(txt(692, 142, 13, statusColor, "middle", "bold", statusWord))
+	s.WriteString(txt(56, 182, 24, cText, "start", "bold", missionMsg))
+	s.WriteString(txt(56, 210, 15, cMuted, "start", "", missionSub))
+	// cost box
+	s.WriteString(rrect(56, 236, 210, 90, 10, "#0b1a13", "#1c3a2a", 1))
+	s.WriteString(txt(78, 278, 30, cGreen, "start", "bold", fmt.Sprintf("$%.2f", meter.TotalRisk)))
+	s.WriteString(txt(78, 298, 11, cMuted, "start", "", "EST. MONTHLY IMPACT"))
+	s.WriteString(txt(78, 316, 13, cMuted, "start", "", fmt.Sprintf("/ $%.2f budget", meter.Threshold)))
+	// gauge with rocket marker
+	cx, cy, R := 500.0, 360.0, 135.0
+	fillRatio := ratio
+	if fillRatio < 0.03 {
+		fillRatio = 0.03
+	}
+	theta := math.Pi * fillRatio
+	mx := cx - R*math.Cos(theta)
+	my := cy - R*math.Sin(theta)
+	s.WriteString(fmt.Sprintf(`<ellipse cx="%.0f" cy="%.0f" rx="66" ry="14" fill="url(#portal)" opacity="0.6"/>`, cx, cy+6))
+	// Faint blurred halo behind, then a CRISP arc on top (the blur no longer
+	// softens the meter itself).
+	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="url(#gg)" stroke-width="7" stroke-linecap="round" opacity="0.30" filter="url(#glow)"/>`, cx-R, cy, R, R, cx+R, cy))
+	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="url(#gg)" stroke-width="5" stroke-linecap="round"/>`, cx-R, cy, R, R, cx+R, cy))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s"/>`, cx-R, cy, cGreen))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s"/>`, cx+R, cy, cRed))
+	s.WriteString(txt(cx, cy-R-10, 14, cMuted, "middle", "", "50%"))
+	s.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" font-size="30" text-anchor="middle">🚀</text>`, mx, my+8))
+	s.WriteString(txt(cx-R, cy+28, 14, cMuted, "middle", "", "0%"))
+	s.WriteString(txt(cx-R, cy+46, 12, cMuted, "middle", "", "used"))
+	s.WriteString(txt(cx+R, cy+28, 14, cMuted, "middle", "", "100%"))
+	s.WriteString(txt(cx+R, cy+46, 12, cMuted, "middle", "", "budget"))
+	// SAFE TO MERGE pill
+	s.WriteString(rrect(cx-118, cy+74, 236, 44, 22, "#0b1a13", decisionColor, 1.5))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="10" fill="none" stroke="%s" stroke-width="2"/>`, cx-78, cy+96, decisionColor))
+	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f l4 4 l7 -8" fill="none" stroke="%s" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`, cx-83, cy+96, decisionColor))
+	s.WriteString(txt(cx+8, cy+102, 18, decisionColor, "middle", "bold", decision))
+
+	// ---- FinOps Impact panel ----
+	px, pw := 790.0, 440.0
+	s.WriteString(rrect(px, 95, pw, 300, 16, panelFill, "#233149", 1))
+	s.WriteString(txt(px+28, 140, 15, cText, "start", "bold", "📊 FINOPS IMPACT"))
+	rightX := px + pw - 28
+	row := func(y float64, label, value, vc string) {
+		s.WriteString(txt(px+28, y, 15, cMuted, "start", "", label))
+		s.WriteString(txt(rightX, y, 15, vc, "end", "bold", value))
+	}
+	row(185, "Estimated Monthly Cost Impact", "$"+humanMoney(monthlyImpact), statusColor)
+	row(223, "Resources Affected", fmt.Sprintf("%d", len(issues)), cText)
+	row(261, "Potential Savings", "$"+humanMoney(monthlyImpact)+" / month", cGreen)
+	row(299, "Analysis Time", analysis, cText)
+	s.WriteString(rrect(px+22, 322, pw-44, 56, 10, "#0b1220", "#233149", 1))
+	s.WriteString(txt(px+38, 346, 13, cMuted, "start", "", "Potential cost increase from loop-bound API calls."))
+	s.WriteString(txt(px+38, 366, 13, cMuted, "start", "", "Docs & fix suggestion below ↓"))
+
+	// ---- Robot mascot ----
+	s.WriteString(rrect(1250, 110, 220, 96, 12, panelFill, "#233149", 1))
+	s.WriteString(txt(1268, 140, 13, cText, "start", "", "Nice work! Just a small"))
+	s.WriteString(txt(1268, 160, 13, cText, "start", "", "tweak to make it even"))
+	s.WriteString(txt(1268, 180, 13, cText, "start", "", "more efficient."))
+	s.WriteString(fmt.Sprintf(`<path d="M1330 206 l0 22 l20 -22 z" fill="%s"/>`, panelFill))
+	rx, ry := 1315.0, 250.0
+	s.WriteString(fmt.Sprintf(`<line x1="%.0f" y1="%.0f" x2="%.0f" y2="%.0f" stroke="%s" stroke-width="2"/>`, rx+45, ry, rx+45, ry-16, cGreen))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.0f" cy="%.0f" r="5" fill="%s" filter="url(#glow)"/>`, rx+45, ry-20, cGreen))
+	s.WriteString(rrect(rx, ry, 90, 74, 18, "#0e2430", cGreen, 2))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.0f" cy="%.0f" r="9" fill="%s" filter="url(#glow)"/>`, rx+30, ry+34, cGreen))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.0f" cy="%.0f" r="9" fill="%s" filter="url(#glow)"/>`, rx+60, ry+34, cGreen))
+	s.WriteString(fmt.Sprintf(`<rect x="%.0f" y="%.0f" width="26" height="4" rx="2" fill="%s"/>`, rx+32, ry+54, cGreen))
+	s.WriteString(rrect(rx+14, ry+80, 62, 46, 10, "#0e2430", cGreen, 2))
+	s.WriteString(fmt.Sprintf(`<path d="M %.0f %.0f l20 0 l0 12 q0 13 -10 18 q-10 -5 -10 -18 z" fill="#0b1a13" stroke="%s" stroke-width="1.5"/>`, rx+35, ry+90, cGreen))
+	s.WriteString(txt(rx+45, ry+108, 13, cGreen, "middle", "bold", "$"))
+
+	// ---- Issue panel + Why it matters + Recommended Actions + Journey ----
 	if len(issues) > 0 {
 		top := issues[0]
 		expl := explanationFor(top.TargetAPI)
@@ -370,53 +440,82 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 		}
 
 		// Issue panel
-		s.WriteString(rrect(30, 500, 1140, 300, 12, cPanel, cBorder, 1))
-		s.WriteString(fmt.Sprintf(`<rect x="30" y="500" width="6" height="300" rx="3" fill="%s"/>`, cRed))
-		s.WriteString(fmt.Sprintf(`<circle cx="70" cy="540" r="14" fill="%s"/>`, cRed))
-		s.WriteString(txt(70, 545, 15, "#ffffff", "middle", "bold", "1"))
-		s.WriteString(txt(98, 547, 22, cText, "start", "bold", "🎯 WANTED: "+top.RuleName))
-		s.WriteString(rrect(1058, 524, 62, 30, 15, "#2d1618", cRed, 1))
-		s.WriteString(txt(1089, 544, 13, cRed, "middle", "bold", sev))
+		s.WriteString(rrect(30, 545, 1440, 300, 16, "#160f14", "#5c2b2b", 1))
+		s.WriteString(fmt.Sprintf(`<rect x="30" y="545" width="6" height="300" rx="3" fill="%s"/>`, cRed))
+		s.WriteString(fmt.Sprintf(`<circle cx="64" cy="588" r="9" fill="none" stroke="%s" stroke-width="2"/>`, cRed))
+		s.WriteString(fmt.Sprintf(`<circle cx="64" cy="588" r="3" fill="%s"/>`, cRed))
+		s.WriteString(txt(84, 593, 14, cRed, "start", "bold", fmt.Sprintf("%d ISSUE FOUND", len(issues))))
 
-		s.WriteString(txt(70, 592, 15, cMuted, "start", "", fmt.Sprintf("🔍 Scanning %s for loop-bound API calls…", top.FilePath)))
-		s.WriteString(txt(70, 620, 15, cText, "start", "", fmt.Sprintf("🚨 %d issue(s) found:", len(issues))))
+		// glowing orb (left)
+		s.WriteString(`<circle cx="150" cy="715" r="70" fill="url(#orb)" filter="url(#glow)"/>`)
+		s.WriteString(`<circle cx="150" cy="715" r="88" fill="none" stroke="#f85149" stroke-opacity="0.25" stroke-width="1"/>`)
+		s.WriteString(`<circle cx="150" cy="715" r="104" fill="none" stroke="#f85149" stroke-opacity="0.14" stroke-width="1"/>`)
 
-		// code box
-		s.WriteString(rrect(70, 640, 1060, 130, 8, cBg, "#5c2b2b", 1))
-		s.WriteString(mono(92, 674, 15, cRed, fmt.Sprintf("[%s] %s:%d (%s)", top.ID, top.FilePath, top.LineNumber, top.TargetAPI)))
-		s.WriteString(rrect(1000, 652, 108, 30, 6, cPanel, cBorder, 1))
-		s.WriteString(txt(1054, 672, 13, cText, "middle", "", "View file ↗"))
-		// snippet with light syntax split
+		// middle: the finding
+		s.WriteString(txt(310, 636, 22, cRed, "start", "bold", "🎯 WANTED: "+top.RuleName))
+		s.WriteString(rrect(310, 656, 60, 26, 13, "#2d1618", cRed, 1))
+		s.WriteString(txt(340, 674, 12, cRed, "middle", "bold", sev))
+		s.WriteString(txt(384, 674, 14, cMuted, "start", "", fmt.Sprintf("in %s", top.FilePath)))
+		s.WriteString(txt(310, 712, 14, cText, "start", "", fmt.Sprintf("🚨 %d issue(s) found:", len(issues))))
+		s.WriteString(rrect(310, 726, 600, 96, 8, "#0b0d12", "#5c2b2b", 1))
+		s.WriteString(mono(330, 756, 14, cRed, fmt.Sprintf("[%s] %s:%d (%s)", top.ID, top.FilePath, top.LineNumber, top.TargetAPI)))
 		snip := top.CodeSnippet
 		if snip == "" {
 			snip = "response = openai.chat.completions.create("
 		}
 		if i := strings.Index(snip, "= "); i >= 0 {
-			s.WriteString(mono(92, 712, 15, cText, snip[:i+2]))
-			s.WriteString(mono(92+float64(len(snip[:i+2]))*9.0, 712, 15, cOrange, snip[i+2:]))
+			s.WriteString(mono(330, 786, 14, cText, snip[:i+2]))
+			s.WriteString(mono(330+float64(len(snip[:i+2]))*8.4, 786, 14, cOrange, snip[i+2:]))
 		} else {
-			s.WriteString(mono(92, 712, 15, cOrange, snip))
+			s.WriteString(mono(330, 786, 14, cOrange, snip))
 		}
-		s.WriteString(txt(92, 748, 14, cMuted, "start", "", expl))
+		s.WriteString(txt(330, 810, 12, cMuted, "start", "", expl))
 
-		// Recommended Action panel
-		s.WriteString(rrect(30, 830, 1140, 200, 12, "#0f1a12", "#238636", 1))
-		s.WriteString(txt(70, 878, 18, cGreen, "start", "bold", "💡 Recommended Action"))
-		recs := recommendationsFor(top.TargetAPI)
-		for i, r := range recs {
-			if i > 2 {
-				break
+		// right: why it matters
+		s.WriteString(txt(970, 636, 13, cYellow, "start", "bold", "✦ WHY IT MATTERS"))
+		whys := []string{"Repeated API calls = higher cost", "Risk of hitting rate limits", "Harder to scale and monitor"}
+		for i, w := range whys {
+			wy := 682.0 + float64(i)*38.0
+			s.WriteString(fmt.Sprintf(`<circle cx="980" cy="%.0f" r="4" fill="%s"/>`, wy-4, cRed))
+			s.WriteString(txt(996, wy, 14, cText, "start", "", w))
+		}
+
+		// ---- Recommended Actions ----
+		s.WriteString(rrect(30, 865, 1440, 160, 16, "#0d1a12", "#1f5132", 1))
+		s.WriteString(txt(56, 905, 14, cGreen, "start", "bold", "⚡ RECOMMENDED ACTIONS"))
+		acts := [][3]string{
+			{"Batch API Requests", "Group multiple inputs and", "send in a single API call."},
+			{"Add Rate Limiting", "Implement rate limiting and", "cost monitoring per run."},
+			{"Use Caching", "Cache responses to avoid", "redundant calls."},
+		}
+		icons := []string{"📦", "🛡️", "💾"}
+		for i, a := range acts {
+			ax := 70.0 + float64(i)*470.0
+			s.WriteString(rrect(ax, 935, 50, 50, 12, "#0e2a1a", cGreen, 1.5))
+			s.WriteString(fmt.Sprintf(`<text x="%.0f" y="968" font-size="24" text-anchor="middle">%s</text>`, ax+25, icons[i]))
+			s.WriteString(txt(ax+66, 953, 16, cText, "start", "bold", a[0]))
+			s.WriteString(txt(ax+66, 974, 12, cMuted, "start", "", a[1]))
+			s.WriteString(txt(ax+66, 992, 12, cMuted, "start", "", a[2]))
+		}
+
+		// ---- PR Cost Journey ----
+		s.WriteString(rrect(30, 1045, 1440, 105, 16, "#14122a", "#2c2650", 1))
+		s.WriteString(txt(56, 1082, 13, cPurple, "start", "bold", "⟳ PR COST JOURNEY"))
+		steps := [][2]string{{"PR Opened", "just now"}, {"Code Scanned", "< 1 sec"}, {"FinOps Analysis", analysis}, {"Results Ready", "< 1 sec"}}
+		for i, st := range steps {
+			sx := 280.0 + float64(i)*200.0
+			s.WriteString(fmt.Sprintf(`<circle cx="%.0f" cy="1092" r="9" fill="none" stroke="%s" stroke-width="2"/>`, sx, cPurple))
+			s.WriteString(fmt.Sprintf(`<circle cx="%.0f" cy="1092" r="3.5" fill="%s"/>`, sx, cGreen))
+			if i < len(steps)-1 {
+				s.WriteString(fmt.Sprintf(`<line x1="%.0f" y1="1092" x2="%.0f" y2="1092" stroke="#3a3566" stroke-width="1.5" stroke-dasharray="4 5"/>`, sx+14, sx+186))
 			}
-			y := 918.0 + float64(i)*36.0
-			s.WriteString(fmt.Sprintf(`<circle cx="82" cy="%.1f" r="3" fill="%s"/>`, y-5, cGreen))
-			s.WriteString(txt(98, y, 15, cText, "start", "", r))
+			s.WriteString(txt(sx+18, 1088, 14, cText, "start", "", st[0]))
+			s.WriteString(txt(sx+18, 1108, 12, cMuted, "start", "", st[1]))
 		}
-		s.WriteString(rrect(930, 895, 210, 44, 8, "#0f1a12", "#238636", 1))
-		s.WriteString(txt(1035, 922, 14, cGreen, "middle", "bold", "Learn Best Practices ↗"))
+		s.WriteString(rrect(1130, 1066, 320, 64, 12, "#1a1640", cPurple, 1))
+		s.WriteString(txt(1150, 1094, 13, cText, "start", "", "FinOps-Guard helps you build cost-aware."))
+		s.WriteString(txt(1150, 1114, 13, cText, "start", "", "Safe today, scalable tomorrow. 💚"))
 	}
-
-	// ---- Footer ----
-	s.WriteString(txt(600, 1085, 15, cMuted, "middle", "", "FinOps-Guard helps you build cost-aware. Safe today, scalable tomorrow. 💚"))
 
 	s.WriteString(`</svg>`)
 
