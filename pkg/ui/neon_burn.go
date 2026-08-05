@@ -13,23 +13,114 @@ import (
 	"github.com/your-username/finops-guard/pkg/analyzer"
 )
 
-// Neon Palette: pink -> coral -> butter -> white (inspired by ORE terminal)
-var neonPalette = []string{
-	"#000000", "#0a0000", "#1a0000", "#2a0505", "#3a0a0a",
-	"#4a1515", "#6a2020", "#8a3030", "#aa4545", "#ca5a5a",
-	"#ea6f6f", "#ff8a8a", "#ffaa88", "#ffbb99", "#ffccaa",
-	"#ffddbb", "#ffeecc", "#ffffdd", "#ffffff",
+// ---------- color and fire engine (from costfire.go) ----------
+
+type rgb struct{ r, g, b uint8 }
+
+func (c rgb) hex() string { return fmt.Sprintf("#%02x%02x%02x", c.r, c.g, c.b) }
+
+// Neon candy ramp: deep plum -> magenta -> pink -> coral -> butter -> white
+var neonRamp = []rgb{
+	{0x0d, 0x07, 0x13}, // deep plum
+	{0x4b, 0x15, 0x28}, // plum
+	{0x99, 0x35, 0x56}, // magenta
+	{0xd4, 0x53, 0x7e}, // pink
+	{0xf0, 0x99, 0x7b}, // coral
+	{0xfa, 0xc7, 0x75}, // butter
+	{0xfa, 0xee, 0xda}, // off-white
 }
 
-const neonFireHeight = 12
-const maxRaindrops = 120
+func heatColor(t float64) rgb {
+	if t <= 0 {
+		return neonRamp[0]
+	}
+	if t >= 1 {
+		return neonRamp[len(neonRamp)-1]
+	}
+	f := t * float64(len(neonRamp)-1)
+	i := int(f)
+	frac := f - float64(i)
+	a, b := neonRamp[i], neonRamp[i+1]
+	lerp := func(x, y uint8) uint8 { return uint8(float64(x) + (float64(y)-float64(x))*frac) }
+	return rgb{lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b)}
+}
 
-type Raindrop struct {
-	x        float64
-	y        float64
-	vx       float64
-	vy       float64
-	lifetime int
+type fire struct {
+	w, h      int
+	heat      []float64
+	intensity float64
+	rng       *rand.Rand
+}
+
+func newFire(w, h int) *fire {
+	return &fire{w: w, h: h, heat: make([]float64, w*h), rng: rand.New(rand.NewSource(time.Now().UnixNano()))}
+}
+
+func (f *fire) SetIntensity(v float64) {
+	if v < 0 {
+		v = 0
+	}
+	if v > 1 {
+		v = 1
+	}
+	f.intensity = v
+}
+
+func (f *fire) Step() {
+	base := (f.h - 1) * f.w
+	for x := 0; x < f.w; x++ {
+		if f.rng.Float64() < 0.85*f.intensity {
+			f.heat[base+x] = 0.6 + 0.4*f.rng.Float64()
+		} else {
+			f.heat[base+x] = 0
+		}
+	}
+	const decay = 3.07
+	for y := 0; y < f.h-1; y++ {
+		row := y * f.w
+		below := (y + 1) * f.w
+		for x := 0; x < f.w; x++ {
+			l := (x - 1 + f.w) % f.w
+			r := (x + 1) % f.w
+			f.heat[row+x] = (f.heat[below+x] + f.heat[below+l] + f.heat[below+r]) / decay
+		}
+	}
+}
+
+func (f *fire) RenderHalfBlocks(overlay map[[2]int]rune) string {
+	var sb strings.Builder
+	sb.Grow(f.w * f.h * 8)
+	for y := 0; y < f.h; y += 2 {
+		for x := 0; x < f.w; x++ {
+			top := heatColor(f.heat[y*f.w+x])
+			bot := neonRamp[0]
+			if y+1 < f.h {
+				bot = heatColor(f.heat[(y+1)*f.w+x])
+			}
+			st := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(top.hex())).
+				Background(lipgloss.Color(bot.hex()))
+			ch := "▀"
+			if r, ok := overlay[[2]int{x, y / 2}]; ok {
+				st = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#FAC775")).
+					Background(lipgloss.Color(bot.hex())).
+					Bold(true)
+				ch = string(r)
+			}
+			sb.WriteString(st.Render(ch))
+		}
+		sb.WriteByte('\n')
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// ---------- particles and TUI model ----------
+
+type particle struct {
+	x     int
+	y     float64
+	speed float64
 }
 
 type BurnStatus int
@@ -83,64 +174,81 @@ func statusFromRisk(totalRisk, threshold float64) BurnStatus {
 	return BurnInferno
 }
 
+var (
+	sweatingQuotes = []string{
+		`"Uh... is anyone else seeing these numbers?"`,
+		`"There's probably an explanation for this."`,
+		`"Let's just... not look at the bill this month."`,
+	}
+
+	onFireQuotes = []string{
+		`"THIS IS FINE." [sips coffee as everything burns]`,
+		`"I've made some questionable decisions."`,
+		`"Maybe we should switch to a different cloud provider?"`,
+	}
+)
+
+func pickNeonQuote(totalRisk, threshold float64) string {
+	status := statusFromRisk(totalRisk, threshold)
+	var pool []string
+	switch status {
+	case BurnSafe:
+		pool = approvingQuotes
+	case BurnSweating:
+		pool = sweatingQuotes
+	case BurnOnFire:
+		pool = onFireQuotes
+	case BurnInferno:
+		pool = criticalQuotes
+	default:
+		pool = approvingQuotes
+	}
+	return pool[rand.Intn(len(pool))]
+}
+
 type NeonBurnModel struct {
-	issues       []analyzer.Issue
-	cursor       int
-	totalRisk    float64
-	threshold    float64
-	width        int
-	height       int
-	fireBuffer   []int
-	raindrops    []*Raindrop
-	frameCount   int
-	bootCountdown int
-	shakeCountdown int
-	selectedQuote string
-	statusMsg    string
+	issues         []analyzer.Issue
+	cursor         int
+	totalRisk      float64
+	threshold      float64
+	width          int
+	height         int
+	fire           *fire
+	fireRows       int
+	particles      []particle
+	frameCount     int
+	bootCountdown  int
+	selectedQuote  string
+	statusMsg      string
 
 	showFixModal   bool
-	fixBefore     string
-	fixAfter      string
-	fixErr        string
+	fixBefore      string
+	fixAfter       string
+	fixErr         string
 
 	showPromptModal bool
 	promptText     string
 
-	leakX int
+	rng *rand.Rand
 }
 
 func NewNeonBurnModel(issues []analyzer.Issue, totalRisk float64, threshold float64) NeonBurnModel {
 	rand.Seed(time.Now().UnixNano())
-	width := 120
-	height := 32
+	width, fireRows := 100, 14
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return NeonBurnModel{
 		issues:        issues,
 		cursor:        0,
 		totalRisk:     totalRisk,
 		threshold:     threshold,
 		width:         width,
-		height:        height,
-		fireBuffer:    make([]int, width*neonFireHeight),
-		raindrops:     make([]*Raindrop, 0, maxRaindrops),
-		bootCountdown: 48, // ~2 seconds at 24 fps
+		height:        32,
+		fire:          newFire(width, fireRows*2), // pixel height = 2x cell rows
+		fireRows:      fireRows,
+		bootCountdown: 48,
 		selectedQuote: pickNeonQuote(totalRisk, threshold),
-		leakX:         width / 3,
+		rng:           rng,
 	}
-}
-
-func pickNeonQuote(totalRisk, threshold float64) string {
-	status := statusFromRisk(totalRisk, threshold)
-	switch status {
-	case BurnSafe:
-		return approvingQuotes[rand.Intn(len(approvingQuotes))]
-	case BurnSweating:
-		return `"Uh... is anyone else seeing these numbers?"` // Mid-tier panic
-	case BurnOnFire:
-		return `"THIS IS FINE." [sips coffee as everything burns]` // Classic
-	case BurnInferno:
-		return criticalQuotes[rand.Intn(len(criticalQuotes))]
-	}
-	return approvingQuotes[0]
 }
 
 func (m NeonBurnModel) Init() tea.Cmd {
@@ -153,8 +261,7 @@ func (m NeonBurnModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Width > 40 && msg.Height > 20 {
 			m.width = msg.Width
 			m.height = msg.Height
-			m.fireBuffer = make([]int, m.width*neonFireHeight)
-			m.leakX = m.width / 3
+			m.fire = newFire(m.width, m.fireRows*2)
 		}
 
 	case TickMsg:
@@ -162,8 +269,31 @@ func (m NeonBurnModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.bootCountdown > 0 {
 			m.bootCountdown--
 		} else {
-			m.updateFirePhysics()
-			m.updateRain()
+			intensity := m.totalRisk / m.threshold
+			if intensity > 1.0 {
+				intensity = 1.0
+			}
+			m.fire.SetIntensity(intensity)
+			m.fire.Step()
+
+			// Spawn particles proportional to cost
+			spawnRate := int(math.Max(1, m.totalRisk/10))
+			for i := 0; i < spawnRate && len(m.particles) < 80; i++ {
+				m.particles = append(m.particles, particle{
+					x:     m.rng.Intn(m.width),
+					y:     0,
+					speed: 0.3 + 0.4*m.rng.Float64(),
+				})
+			}
+			// Update particles
+			alive := m.particles[:0]
+			for _, p := range m.particles {
+				p.y += p.speed
+				if int(p.y) < m.fireRows-2 {
+					alive = append(alive, p)
+				}
+			}
+			m.particles = alive
 		}
 		return m, doTick()
 
@@ -182,7 +312,7 @@ func (m NeonBurnModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.statusMsg = "❌ Fix failed: " + err.Error()
 					} else {
 						m.statusMsg = fmt.Sprintf("✅ Fixed %s:%d — fire cooling...", issue.FilePath, issue.LineNumber)
-						m.raindrops = make([]*Raindrop, 0) // Clear rain
+						m.particles = make([]particle, 0)
 					}
 				}
 				m.showFixModal = false
@@ -241,116 +371,10 @@ func (m NeonBurnModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *NeonBurnModel) updateFirePhysics() {
-	if m.width == 0 {
-		return
-	}
-
-	// Seed heat based on risk ratio and rain intensity
-	maxHeat := len(neonPalette) - 1
-	riskRatio := m.totalRisk / m.threshold
-	if riskRatio > 1.0 {
-		riskRatio = 1.0
-	}
-	maxHeat = int(float64(maxHeat) * (0.2 + 0.8*riskRatio))
-
-	bottomRow := (neonFireHeight - 1) * m.width
-	for x := 0; x < m.width; x++ {
-		// Hotter at the leak site
-		intensity := rand.Intn(maxHeat + 1)
-		if x >= m.leakX-2 && x <= m.leakX+2 {
-			intensity = maxHeat // Peak heat at leak location
-		}
-		m.fireBuffer[bottomRow+x] = intensity
-	}
-
-	// Propagate upwards with decay and drift
-	for y := 1; y < neonFireHeight; y++ {
-		for x := 0; x < m.width; x++ {
-			srcIndex := y*m.width + x
-			decay := rand.Intn(3) // Slightly more decay for more realistic burn
-			dstX := (x + rand.Intn(3) - 1 + m.width) % m.width
-			dstIndex := (y-1)*m.width + dstX
-
-			val := m.fireBuffer[srcIndex] - decay
-			if val < 0 {
-				val = 0
-			}
-			m.fireBuffer[dstIndex] = val
-		}
-	}
-}
-
-func (m *NeonBurnModel) updateRain() {
-	// Spawn raindrops proportional to cost
-	spawnRate := int(math.Max(1, m.totalRisk/10))
-	for i := 0; i < spawnRate && len(m.raindrops) < maxRaindrops; i++ {
-		m.raindrops = append(m.raindrops, &Raindrop{
-			x:        float64(m.leakX) + (rand.Float64()-0.5)*4,
-			y:        0,
-			vy:       2 + rand.Float64()*2,
-			lifetime: 80,
-		})
-	}
-
-	// Update falling raindrops
-	newRain := make([]*Raindrop, 0, len(m.raindrops))
-	for _, drop := range m.raindrops {
-		drop.lifetime--
-		drop.y += drop.vy
-		if drop.lifetime > 0 && drop.y < float64(neonFireHeight) {
-			newRain = append(newRain, drop)
-		}
-	}
-	m.raindrops = newRain
-}
-
-func (m NeonBurnModel) renderNeonFire() string {
-	var s strings.Builder
-
-	for y := 0; y < neonFireHeight-1; y += 2 {
-		for x := 0; x < m.width; x++ {
-			topIdx := m.fireBuffer[y*m.width+x]
-			botIdx := m.fireBuffer[(y+1)*m.width+x]
-
-			// Draw raindrops on top if they're at this position
-			for _, drop := range m.raindrops {
-				dx := int(drop.x)
-				dy := int(drop.y)
-				if dx == x && dy/2 == y/2 {
-					// Raindrop is here — override with money symbol
-					alpha := 255 * (drop.lifetime / 80)
-					rainColor := lipgloss.Color(fmt.Sprintf("#ff00ff%02x", int(alpha)))
-					cell := lipgloss.NewStyle().
-						Foreground(rainColor).
-						Background(lipgloss.Color(neonPalette[botIdx])).
-						Render("$")
-					s.WriteString(cell)
-					goto nextCell
-				}
-			}
-
-			// Normal fire rendering
-			{
-				cell := lipgloss.NewStyle().
-					Foreground(lipgloss.Color(neonPalette[botIdx])).
-					Background(lipgloss.Color(neonPalette[topIdx])).
-					Render("▀")
-				s.WriteString(cell)
-			}
-		nextCell:
-		}
-		s.WriteString("\n")
-	}
-
-	return s.String()
-}
-
 func (m NeonBurnModel) renderBootSequence() string {
 	var s strings.Builder
 	progress := float64(48-m.bootCountdown) / 48
 
-	// Scanline sweep
 	scanline := int(float64(m.height-4) * progress)
 
 	s.WriteString(lipgloss.NewStyle().Foreground(pink).Bold(true).Render("🛡️  F I N O P S - G U A R D") + "\n")
@@ -383,12 +407,17 @@ func (m NeonBurnModel) View() string {
 	status := statusFromRisk(m.totalRisk, m.threshold)
 	statusColor := status.Color()
 
+	// Build particle overlay
+	overlay := make(map[[2]int]rune, len(m.particles))
+	for _, p := range m.particles {
+		overlay[[2]int{p.x, int(p.y)}] = '$'
+	}
+
 	var doc strings.Builder
+	doc.WriteString(m.fire.RenderHalfBlocks(overlay))
+	doc.WriteString("\n")
 
-	// Fire canvas (top)
-	doc.WriteString(m.renderNeonFire())
-
-	// Findings radar
+	// Findings
 	doc.WriteString(lipgloss.NewStyle().Bold(true).Foreground(pink).Render("🎯 LEAKS DETECTED") + "\n")
 	if len(m.issues) == 0 {
 		doc.WriteString(lipgloss.NewStyle().Foreground(green).Render("None.\n\n"))
