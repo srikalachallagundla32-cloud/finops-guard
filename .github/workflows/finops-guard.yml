@@ -19,7 +19,12 @@ jobs:
       pull-requests: write
 
     steps:
+      # Check out the real head branch (not the PR merge ref) so the burn-meter
+      # commit-back can fast-forward push back to it.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -36,10 +41,11 @@ jobs:
           REF="${{ github.head_ref || github.ref_name }}"
           SVG_URL="https://raw.githubusercontent.com/${{ github.repository }}/${REF}/assets/burn.svg"
 
-          # Scan the most expensive-looking source file (largest by line count),
-          # deterministically, ignoring vendored/test fixtures.
+          # Scan the largest application source file, deterministically,
+          # ignoring vendored deps and test fixtures (which aren't shipped code).
           TARGET=$(find . -type f \( -name '*.py' -o -name '*.ts' -o -name '*.js' \) \
             -not -path './vendor/*' -not -path './node_modules/*' \
+            -not -path './test/*' -not -path '*/testdata/*' \
             -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
           echo "Scanning: ${TARGET:-<none>}"
 
