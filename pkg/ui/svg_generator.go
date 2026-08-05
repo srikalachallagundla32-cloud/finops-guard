@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -38,87 +39,69 @@ func GenerateBurnSVG(meter SVGBurnMeter, outputPath string) error {
 		gaugeLabel = "CAUTION"
 	}
 
-	// Calculate needle angle (0-180 degrees across the gauge arc)
-	needleAngle := -90 + (ratio * 180)
+	// Gauge geometry: semicircle, center (cx,cy), radius R. 0% = left, 50% = top,
+	// 100% = right. theta sweeps 0..π. All positions computed with real trig so
+	// the render never depends on CSS transforms (GitHub strips those in comments).
+	const cx, cy, radius, needleLen = 160.0, 140.0, 110.0, 96.0
+	theta := math.Pi * ratio
+	arcEndX := cx - radius*math.Cos(theta)
+	arcEndY := cy - radius*math.Sin(theta)
+	tipX := cx - needleLen*math.Cos(theta)
+	tipY := cy - needleLen*math.Sin(theta)
 
-	// SVG gauge meter (asymmetric, designed to feel intentional)
+	issuesText := fmt.Sprintf("%d issues", meter.IssueCount)
+	if meter.IssueCount == 1 {
+		issuesText = "1 issue"
+	}
+
 	svg := fmt.Sprintf(`<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <style>
-      @keyframes needleShake {
-        0%% { transform: rotate(%.2fdeg); }
-        50%% { transform: rotate(%.2fdeg); }
-        100%% { transform: rotate(%.2fdeg); }
-      }
-      @keyframes pulseGauge {
-        0%%, 100%% { opacity: 0.9; }
-        50%% { opacity: 1.0; }
-      }
-      .gauge-bg { fill: #0d0713; }
-      .gauge-text { font-family: 'Courier New', monospace; font-size: 11px; fill: #AFA9EC; }
-      .gauge-value { font-family: 'Courier New', monospace; font-size: 18px; font-weight: bold; fill: %s; }
+      @keyframes pulseGauge { 0%%,100%% { opacity: 0.85; } 50%% { opacity: 1; } }
+      .gauge-text  { font-family: 'Courier New', monospace; font-size: 11px; fill: #AFA9EC; }
+      .gauge-value { font-family: 'Courier New', monospace; font-size: 20px; font-weight: bold; fill: %s; }
       .gauge-label { font-family: 'Courier New', monospace; font-size: 13px; font-weight: bold; fill: %s; letter-spacing: 1px; }
-      .needle { animation: needleShake 0.15s infinite; transform-origin: 160px 140px; }
-      .arc { animation: pulseGauge 1.5s ease-in-out infinite; }
+      .arc         { animation: pulseGauge 1.6s ease-in-out infinite; }
     </style>
   </defs>
 
-  <!-- Background -->
-  <rect width="320" height="200" class="gauge-bg" />
+  <rect width="320" height="200" fill="#0d0713" />
 
-  <!-- Gauge Arc (semicircle) -->
-  <defs>
-    <linearGradient id="gaugeGrad" x1="50" y1="140" x2="270" y2="140">
-      <stop offset="0%%" style="stop-color:#5DCAA5;stop-opacity:0.3" />
-      <stop offset="50%%" style="stop-color:#FAC775;stop-opacity:0.6" />
-      <stop offset="100%%" style="stop-color:#F09595;stop-opacity:1" />
-    </linearGradient>
-  </defs>
+  <!-- Track -->
+  <path d="M 50 140 A 110 110 0 0 1 270 140" stroke="#2a1a35" stroke-width="9" fill="none" stroke-linecap="round" />
 
-  <!-- Arc background (full gauge outline) -->
-  <path d="M 50 140 A 110 110 0 0 1 270 140" stroke="#2a1a35" stroke-width="8" fill="none" />
+  <!-- Active arc (proportional to cost/budget) -->
+  <path d="M 50 140 A 110 110 0 0 1 %.2f %.2f" stroke="%s" stroke-width="9" fill="none" class="arc" stroke-linecap="round" />
 
-  <!-- Active arc (shows current cost) -->
-  <path d="M 50 140 A 110 110 0 0 1 %.0f %.0f" stroke="%s" stroke-width="8" fill="none" class="arc" stroke-linecap="round" />
+  <!-- Needle (static coords — no CSS transform) -->
+  <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" stroke-width="2.5" stroke-linecap="round" />
+  <circle cx="160" cy="140" r="5" fill="#0d0713" stroke="%s" stroke-width="2" />
 
-  <!-- Needle -->
-  <g class="needle">
-    <line x1="160" y1="140" x2="160" y2="40" stroke="%s" stroke-width="2" />
-    <circle cx="160" cy="140" r="3" fill="%s" />
-  </g>
+  <!-- Tick labels -->
+  <text x="46" y="162" class="gauge-text" text-anchor="end">0%%</text>
+  <text x="160" y="18" class="gauge-text" text-anchor="middle">50%%</text>
+  <text x="274" y="162" class="gauge-text" text-anchor="start">100%%</text>
 
-  <!-- Tick marks (0%%, 50%%, 100%%) -->
-  <line x1="50" y1="140" x2="50" y2="150" stroke="#AFA9EC" stroke-width="1" />
-  <text x="45" y="165" class="gauge-text" text-anchor="end">0%%</text>
+  <!-- Cost (left) -->
+  <text x="20" y="40" class="gauge-value">$%.2f</text>
+  <text x="20" y="58" class="gauge-text">/ $%.2f</text>
 
-  <line x1="160" y1="30" x2="160" y2="20" stroke="#AFA9EC" stroke-width="1" />
-  <text x="160" y="15" class="gauge-text" text-anchor="middle">50%%</text>
+  <!-- Status (right) -->
+  <text x="300" y="90" class="gauge-label" text-anchor="end">%s</text>
+  <text x="300" y="110" class="gauge-text" text-anchor="end">%.0f%% used</text>
 
-  <line x1="270" y1="140" x2="270" y2="150" stroke="#AFA9EC" stroke-width="1" />
-  <text x="275" y="165" class="gauge-text" text-anchor="start">100%%</text>
-
-  <!-- Cost values (left side, asymmetric) -->
-  <text x="20" y="35" class="gauge-value">$%.2f</text>
-  <text x="20" y="52" class="gauge-text">/ $%.2f</text>
-
-  <!-- Status label (right side, asymmetric) -->
-  <text x="300" y="85" class="gauge-label" text-anchor="end">%s</text>
-  <text x="300" y="105" class="gauge-text" text-anchor="end">%%%.0f used</text>
-
-  <!-- Issues count (bottom, left) -->
-  <text x="20" y="190" class="gauge-text">%d issues</text>
+  <!-- Issues (bottom-left) -->
+  <text x="20" y="188" class="gauge-text">%s</text>
 </svg>`,
-		needleAngle, needleAngle, needleAngle,
 		gaugeColor, gaugeColor,
-		50+220*ratio, 140-110*ratio, // arc end point (semicircle)
-		gaugeColor,
-		gaugeColor,
+		arcEndX, arcEndY, gaugeColor,
+		tipX, tipY, cx, cy, gaugeColor, // needle line uses cx,cy as source; wait order below
 		gaugeColor,
 		meter.TotalRisk,
 		meter.Threshold,
 		gaugeLabel,
 		ratio*100,
-		meter.IssueCount,
+		issuesText,
 	)
 
 	if err := os.WriteFile(outputPath, []byte(svg), 0644); err != nil {
@@ -128,85 +111,77 @@ func GenerateBurnSVG(meter SVGBurnMeter, outputPath string) error {
 	return nil
 }
 
-// GeneratePRComment creates a Markdown PR comment with receipt + wanted posters
+// CommentMarker is a hidden HTML comment used to find-and-update the bot's
+// single PR comment instead of posting a new one each run.
+const CommentMarker = "<!-- finops-guard-comment -->"
+
+// GeneratePRComment renders a clean, scannable PR comment: a factual headline,
+// the gauge image, a findings table, and an at-scale projection. The playful
+// "bounty" framing stays as one small accent — never as leaked-log clutter.
 func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) string {
 	var buf strings.Builder
-
-	// Decision first (top, bold)
 	ratio := meter.TotalRisk / meter.Threshold
-	decision := "✅ SAFE TO MERGE"
+	pct := ratio * 100
+
+	// Verdict word + factual headline (informative, not a glib stamp).
+	verdict := "within budget"
 	if ratio > 0.9 {
-		decision = "🛑 BUDGET EXCEEDED"
+		verdict = "over budget"
 	} else if ratio > 0.75 {
-		decision = "⚠️  BUDGET ALERT"
+		verdict = "near budget limit"
 	} else if ratio > 0.6 {
-		decision = "⚡ APPROACHING LIMIT"
+		verdict = "approaching budget"
 	}
-	buf.WriteString(decision + "\n\n")
 
-	// SVG reference
-	buf.WriteString(fmt.Sprintf("![Burn Meter](%s)\n\n", svgPath))
+	buf.WriteString(CommentMarker + "\n")
+	buf.WriteString("### 🛡️ finops-guard — cost check\n\n")
+	buf.WriteString(fmt.Sprintf("**This change adds ~$%.2f/run** — %.0f%% of the $%.2f budget (%s).\n\n",
+		meter.TotalRisk, pct, meter.Threshold, verdict))
 
-	// Receipt (no decoration, just facts)
-	buf.WriteString("```\n")
+	buf.WriteString(fmt.Sprintf("<img src=\"%s\" width=\"420\" alt=\"cost burn meter\" />\n\n", svgPath))
 
 	if len(issues) == 0 {
-		buf.WriteString("no issues\n")
-	} else {
-		// Sort by cost (highest first)
-		sort.Slice(issues, func(i, j int) bool {
-			return issues[i].EstCostRisk > issues[j].EstCostRisk
-		})
-
-		// Show top 5 findings
-		limit := len(issues)
-		if limit > 5 {
-			limit = 5
-		}
-
-		for _, issue := range issues[:limit] {
-			buf.WriteString(fmt.Sprintf("%s:%d  +$%.2f/run\n", issue.FilePath, issue.LineNumber, issue.EstCostRisk))
-			buf.WriteString(fmt.Sprintf("  %s\n", issue.RuleName))
-		}
-
-		if len(issues) > 5 {
-			buf.WriteString(fmt.Sprintf("\n+%d more issues\n", len(issues)-5))
-		}
+		buf.WriteString("No loop-bound API calls detected. Nothing to worry about here. ✅\n")
+		return buf.String()
 	}
 
-	buf.WriteString("\n")
-	buf.WriteString(fmt.Sprintf("total: $%.2f / $%.2f budget\n", meter.TotalRisk, meter.Threshold))
-	buf.WriteString("```\n")
+	// Sort by cost, highest first.
+	sort.Slice(issues, func(i, j int) bool { return issues[i].EstCostRisk > issues[j].EstCostRisk })
 
-	// Wanted posters for high-cost findings
-	if len(issues) > 0 {
-		sort.Slice(issues, func(i, j int) bool {
-			return issues[i].EstCostRisk > issues[j].EstCostRisk
-		})
-
-		for i, issue := range issues {
-			// Loop-scaled monthly cost: per-call × 1000 iterations × 30 runs/month
-			bounty := issue.EstCostRisk * 1000 * 30
-			if bounty > 10.0 { // Only poster findings that cost >$10/month at scale
-				buf.WriteString("\n<details>\n")
-				buf.WriteString(fmt.Sprintf("<summary>🎯 WANTED: %s</summary>\n\n", issue.RuleName))
-				loc := fmt.Sprintf("%s:%d", issue.FilePath, issue.LineNumber)
-				buf.WriteString("```\n")
-				buf.WriteString("  ┌─ WANTED ──────────────────────────────┐\n")
-				buf.WriteString(fmt.Sprintf("  │  \"%s\"\n", issue.RuleName))
-				buf.WriteString(fmt.Sprintf("  │  last seen: %s\n", loc))
-				buf.WriteString(fmt.Sprintf("  │  bleeding:  $%.2f/mo\n", bounty))
-				buf.WriteString("  │\n")
-				buf.WriteString(fmt.Sprintf("  │  BOUNTY: $%.2f/mo — claim it by fixing\n", bounty))
-				buf.WriteString("  └───────────────────────────────────────┘\n")
-				buf.WriteString("```\n")
-				buf.WriteString(fmt.Sprintf("_Claim the bounty: add `[finops: fixed #%d]` to your commit message._\n", i+1))
-				buf.WriteString("</details>\n")
-			}
-		}
+	// Findings table — the clear, scannable core.
+	buf.WriteString("| Location | Per run | At scale¹ | Pattern |\n")
+	buf.WriteString("|---|--:|--:|---|\n")
+	for _, issue := range issues {
+		monthly := issue.EstCostRisk * 1000 * 30 // 1,000 iterations × 30 runs/mo
+		buf.WriteString(fmt.Sprintf("| `%s:%d` | +$%.2f | ~$%s/mo | %s |\n",
+			issue.FilePath, issue.LineNumber, issue.EstCostRisk, humanMoney(monthly), issue.RuleName))
 	}
+	buf.WriteString("\n<sub>¹ if this call runs ~1,000 iterations, 30 times/month.</sub>\n\n")
+
+	// One tasteful accent + a pointer to the committable suggestion below.
+	top := issues[0]
+	topMonthly := top.EstCostRisk * 1000 * 30
+	buf.WriteString(fmt.Sprintf("> 💸 Left unfixed, the top leak (`%s:%d`) bleeds about **$%s/mo** at scale.\n",
+		top.FilePath, top.LineNumber, humanMoney(topMonthly)))
+	buf.WriteString("> A one-click **Commit suggestion** to flag it is attached as a review comment on that line.\n")
 
 	return buf.String()
+}
+
+// humanMoney formats a dollar amount with thousands separators and no cents
+// once it's large enough that cents are noise (e.g. 225000 -> "225,000").
+func humanMoney(v float64) string {
+	n := int64(v + 0.5)
+	s := fmt.Sprintf("%d", n)
+	// Insert commas.
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }
 
 // Issue is a minimal issue representation for PR comments

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ func main() {
 	outputSVG := flag.String("output-svg", "", "Write animated SVG burn meter to file (e.g., burn.svg)")
 	generatePRComment := flag.Bool("generate-pr-comment", false, "Generate Markdown PR comment with receipt + SVG reference (requires --output-svg)")
 	svgURL := flag.String("svg-url", "", "Absolute URL for the SVG image in the PR comment (falls back to ./<output-svg> when empty)")
+	findingsJSON := flag.String("findings-json", "", "Write findings (with committable suggestion text) to a JSON file for the CI suggestion step")
 	flag.Parse()
 
 	_, ok := ui.ByName(*themeName)
@@ -74,10 +76,10 @@ func main() {
 			IssueCount: len(issues),
 		}
 		if err := ui.GenerateBurnSVG(meter, *outputSVG); err != nil {
-			fmt.Printf("❌ [Error] Generating SVG: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ [Error] Generating SVG: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("✅ Generated SVG burn meter: %s\n", *outputSVG)
+		fmt.Fprintf(os.Stderr, "✅ Generated SVG burn meter: %s\n", *outputSVG)
 
 		// Generate PR comment if requested
 		if *generatePRComment {
@@ -96,7 +98,37 @@ func main() {
 				imgSrc = *svgURL
 			}
 			prComment := ui.GeneratePRComment(meter, commentIssues, imgSrc)
-			fmt.Println("\n" + prComment)
+			fmt.Println(prComment)
+		}
+
+		// Emit findings + committable suggestion text for the CI suggestion step.
+		if *findingsJSON != "" {
+			type finding struct {
+				ID         string  `json:"id"`
+				File       string  `json:"file"`
+				Line       int     `json:"line"`
+				TargetAPI  string  `json:"target_api"`
+				CostPerRun float64 `json:"cost_per_run"`
+				Suggestion string  `json:"suggestion"`
+			}
+			out := make([]finding, 0, len(issues))
+			for _, iss := range issues {
+				repl, ferr := analyzer.SuggestionBlock(iss)
+				if ferr != nil {
+					continue // line out of range / unreadable — skip rather than emit a broken suggestion
+				}
+				out = append(out, finding{iss.ID, iss.FilePath, iss.LineNumber, iss.TargetAPI, iss.EstCostRisk, repl})
+			}
+			data, _ := json.MarshalIndent(out, "", "  ")
+			if werr := os.WriteFile(*findingsJSON, data, 0644); werr != nil {
+				fmt.Fprintf(os.Stderr, "❌ [Error] Writing findings JSON: %v\n", werr)
+			}
+		}
+
+		// When generating a PR comment, stdout is the comment payload only —
+		// do not fall through to the legacy scan banner.
+		if *generatePRComment {
+			return
 		}
 	}
 

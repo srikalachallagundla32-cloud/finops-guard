@@ -1,66 +1,39 @@
 <svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <style>
-      @keyframes needleShake {
-        0% { transform: rotate(-89.97deg); }
-        50% { transform: rotate(-89.97deg); }
-        100% { transform: rotate(-89.97deg); }
-      }
-      @keyframes pulseGauge {
-        0%, 100% { opacity: 0.9; }
-        50% { opacity: 1.0; }
-      }
-      .gauge-bg { fill: #0d0713; }
-      .gauge-text { font-family: 'Courier New', monospace; font-size: 11px; fill: #AFA9EC; }
-      .gauge-value { font-family: 'Courier New', monospace; font-size: 18px; font-weight: bold; fill: #5DCAA5; }
+      @keyframes pulseGauge { 0%,100% { opacity: 0.85; } 50% { opacity: 1; } }
+      .gauge-text  { font-family: 'Courier New', monospace; font-size: 11px; fill: #AFA9EC; }
+      .gauge-value { font-family: 'Courier New', monospace; font-size: 20px; font-weight: bold; fill: #5DCAA5; }
       .gauge-label { font-family: 'Courier New', monospace; font-size: 13px; font-weight: bold; fill: #5DCAA5; letter-spacing: 1px; }
-      .needle { animation: needleShake 0.15s infinite; transform-origin: 160px 140px; }
-      .arc { animation: pulseGauge 1.5s ease-in-out infinite; }
+      .arc         { animation: pulseGauge 1.6s ease-in-out infinite; }
     </style>
   </defs>
 
-  <!-- Background -->
-  <rect width="320" height="200" class="gauge-bg" />
+  <rect width="320" height="200" fill="#0d0713" />
 
-  <!-- Gauge Arc (semicircle) -->
-  <defs>
-    <linearGradient id="gaugeGrad" x1="50" y1="140" x2="270" y2="140">
-      <stop offset="0%" style="stop-color:#5DCAA5;stop-opacity:0.3" />
-      <stop offset="50%" style="stop-color:#FAC775;stop-opacity:0.6" />
-      <stop offset="100%" style="stop-color:#F09595;stop-opacity:1" />
-    </linearGradient>
-  </defs>
+  <!-- Track -->
+  <path d="M 50 140 A 110 110 0 0 1 270 140" stroke="#2a1a35" stroke-width="9" fill="none" stroke-linecap="round" />
 
-  <!-- Arc background (full gauge outline) -->
-  <path d="M 50 140 A 110 110 0 0 1 270 140" stroke="#2a1a35" stroke-width="8" fill="none" />
+  <!-- Active arc (proportional to cost/budget) -->
+  <path d="M 50 140 A 110 110 0 0 1 50.00 139.95" stroke="#5DCAA5" stroke-width="9" fill="none" class="arc" stroke-linecap="round" />
 
-  <!-- Active arc (shows current cost) -->
-  <path d="M 50 140 A 110 110 0 0 1 50 140" stroke="#5DCAA5" stroke-width="8" fill="none" class="arc" stroke-linecap="round" />
+  <!-- Needle (static coords — no CSS transform) -->
+  <line x1="64.00" y1="139.95" x2="160.00" y2="140.00" stroke="#5DCAA5" stroke-width="2.5" stroke-linecap="round" />
+  <circle cx="160" cy="140" r="5" fill="#0d0713" stroke="#5DCAA5" stroke-width="2" />
 
-  <!-- Needle -->
-  <g class="needle">
-    <line x1="160" y1="140" x2="160" y2="40" stroke="#5DCAA5" stroke-width="2" />
-    <circle cx="160" cy="140" r="3" fill="#5DCAA5" />
-  </g>
+  <!-- Tick labels -->
+  <text x="46" y="162" class="gauge-text" text-anchor="end">0%</text>
+  <text x="160" y="18" class="gauge-text" text-anchor="middle">50%</text>
+  <text x="274" y="162" class="gauge-text" text-anchor="start">100%</text>
 
-  <!-- Tick marks (0%, 50%, 100%) -->
-  <line x1="50" y1="140" x2="50" y2="150" stroke="#AFA9EC" stroke-width="1" />
-  <text x="45" y="165" class="gauge-text" text-anchor="end">0%</text>
+  <!-- Cost (left) -->
+  <text x="20" y="40" class="gauge-value">$0.01</text>
+  <text x="20" y="58" class="gauge-text">/ $50.00</text>
 
-  <line x1="160" y1="30" x2="160" y2="20" stroke="#AFA9EC" stroke-width="1" />
-  <text x="160" y="15" class="gauge-text" text-anchor="middle">50%</text>
+  <!-- Status (right) -->
+  <text x="300" y="90" class="gauge-label" text-anchor="end">SAFE</text>
+  <text x="300" y="110" class="gauge-text" text-anchor="end">0% used</text>
 
-  <line x1="270" y1="140" x2="270" y2="150" stroke="#AFA9EC" stroke-width="1" />
-  <text x="275" y="165" class="gauge-text" text-anchor="start">100%</text>
-
-  <!-- Cost values (left side, asymmetric) -->
-  <text x="20" y="35" class="gauge-value">$0.01</text>
-  <text x="20" y="52" class="gauge-text">/ $50.00</text>
-
-  <!-- Status label (right side, asymmetric) -->
-  <text x="300" y="85" class="gauge-label" text-anchor="end">SAFE</text>
-  <text x="300" y="105" class="gauge-text" text-anchor="end">%0 used</text>
-
-  <!-- Issues count (bottom, left) -->
-  <text x="20" y="190" class="gauge-text">1 issues</text>
+  <!-- Issues (bottom-left) -->
+  <text x="20" y="188" class="gauge-text">1 issue</text>
 </svg>

@@ -50,12 +50,14 @@ jobs:
             --output-svg=assets/burn.svg \
             --svg-url="$SVG_URL" \
             --generate-pr-comment \
-            --no-tui > raw.md 2>&1 || true
+            --findings-json=findings.json \
+            --no-tui > raw.md 2>err.log || true
 
-          # Strip the CLI banner lines; keep only the PR comment (from the decision line on).
-          awk '/SAFE TO MERGE|BUDGET|APPROACHING LIMIT/{f=1} f' raw.md > comment.md
+          # The comment is everything from the hidden marker onward (drops CLI banner).
+          sed -n '/<!-- finops-guard-comment -->/,$p' raw.md > comment.md
           test -s comment.md || cp raw.md comment.md
-          cat comment.md
+          echo "----- comment.md -----"; cat comment.md
+          echo "----- findings.json -----"; cat findings.json 2>/dev/null || echo "[]"
 
       - name: Commit burn meter
         run: |
@@ -69,19 +71,68 @@ jobs:
             echo "Burn meter unchanged."
           fi
 
-      - name: Post PR Comment
+      - name: Post / update PR comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const comment = fs.readFileSync('comment.md', 'utf8');
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
+            const body = fs.readFileSync('comment.md', 'utf8');
+            const marker = '<!-- finops-guard-comment -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            // Upsert: reuse our existing comment instead of stacking new ones.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100
             });
+            const mine = comments.find(c => c.body && c.body.includes(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Post fix suggestions
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let findings = [];
+            try { findings = JSON.parse(fs.readFileSync('findings.json', 'utf8')); } catch (e) {}
+            if (!findings.length) return;
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const commit_id = context.payload.pull_request.head.sha;
+            const sMarker = '<!-- finops-guard-suggestion -->';
+
+            // Existing review comments, to avoid duplicate suggestions on re-run.
+            const existing = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner, repo, pull_number, per_page: 100
+            });
+
+            for (const f of findings) {
+              const path = f.file.replace(/^\.\//, '');
+              const already = existing.some(c =>
+                c.path === path && c.line === f.line && c.body && c.body.includes(sMarker));
+              if (already) continue;
+
+              const body =
+                `${sMarker}\n**finops-guard** — annotate this loop-bound \`${f.target_api}\` call ` +
+                `so the cost risk is flagged in code before merge:\n\n` +
+                '```suggestion\n' + f.suggestion + '\n```\n';
+
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner, repo, pull_number, commit_id, path,
+                  line: f.line, side: 'RIGHT', body
+                });
+              } catch (e) {
+                core.warning(`Could not attach suggestion at ${path}:${f.line} — ${e.message}`);
+              }
+            }
 
       - name: Create Check Run
         uses: actions/github-script@v7
@@ -92,10 +143,10 @@ jobs:
 
             let conclusion = 'success';
             let name = '✅ finops-guard — the CFO sleeps soundly';
-            if (output.includes('BUDGET EXCEEDED')) {
+            if (output.includes('over budget')) {
               conclusion = 'failure';
               name = '❌ finops-guard — the CFO has fainted';
-            } else if (output.includes('BUDGET ALERT') || output.includes('APPROACHING LIMIT')) {
+            } else if (output.includes('near budget limit') || output.includes('approaching budget')) {
               conclusion = 'neutral';
               name = '⚠️ finops-guard — the CFO is pacing';
             }
