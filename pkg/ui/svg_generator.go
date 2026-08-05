@@ -377,10 +377,13 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 	theta := math.Pi * fillRatio
 	mx := cx - R*math.Cos(theta)
 	my := cy - R*math.Sin(theta)
-	s.WriteString(fmt.Sprintf(`<ellipse cx="%.0f" cy="%.0f" rx="72" ry="18" fill="url(#portal)"/>`, cx, cy+6))
-	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="url(#gg)" stroke-width="4" stroke-linecap="round" filter="url(#glow)"/>`, cx-R, cy, R, R, cx+R, cy))
-	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s" filter="url(#glow)"/>`, cx-R, cy, cGreen))
-	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s" filter="url(#glow)"/>`, cx+R, cy, cRed))
+	s.WriteString(fmt.Sprintf(`<ellipse cx="%.0f" cy="%.0f" rx="66" ry="14" fill="url(#portal)" opacity="0.6"/>`, cx, cy+6))
+	// Faint blurred halo behind, then a CRISP arc on top (the blur no longer
+	// softens the meter itself).
+	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="url(#gg)" stroke-width="7" stroke-linecap="round" opacity="0.30" filter="url(#glow)"/>`, cx-R, cy, R, R, cx+R, cy))
+	s.WriteString(fmt.Sprintf(`<path d="M %.1f %.1f A %.1f %.1f 0 0 1 %.1f %.1f" fill="none" stroke="url(#gg)" stroke-width="5" stroke-linecap="round"/>`, cx-R, cy, R, R, cx+R, cy))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s"/>`, cx-R, cy, cGreen))
+	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s"/>`, cx+R, cy, cRed))
 	s.WriteString(txt(cx, cy-R-10, 14, cMuted, "middle", "", "50%"))
 	s.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" font-size="30" text-anchor="middle">🚀</text>`, mx, my+8))
 	s.WriteString(txt(cx-R, cy+28, 14, cMuted, "middle", "", "0%"))
