@@ -1,0 +1,95 @@
+name: finops-guard
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '**.py'
+      - '**.ts'
+      - '**.js'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Build finops-guard
+        run: make build
+
+      - name: Scan codebase
+        id: scan
+        run: |
+          ./bin/finops-guard \
+            --pricing=pricing.json \
+            --scan=$(find . -name '*.py' -o -name '*.ts' -o -name '*.js' | head -1) \
+            --output-svg=burn.svg \
+            --generate-pr-comment \
+            --no-tui > comment.md 2>&1 || true
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const comment = fs.readFileSync('comment.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Create Check Run
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('comment.md', 'utf8');
+
+            // Determine status from output
+            let conclusion = 'success';
+            let status_text = '✅ finops-guard — the CFO sleeps soundly';
+
+            if (output.includes('BUDGET ALERT') || output.includes('APPROACHING LIMIT')) {
+              conclusion = 'neutral';
+              status_text = '⚠️  finops-guard — the CFO is pacing';
+            } else if (output.includes('BUDGET EXCEEDED')) {
+              conclusion = 'failure';
+              status_text = '❌ finops-guard — the CFO has fainted';
+            }
+
+            github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: status_text,
+              head_sha: context.sha,
+              status: 'completed',
+              conclusion: conclusion,
+              output: {
+                title: 'Cost Analysis',
+                summary: output.split('\n').slice(0, 10).join('\n')
+              }
+            });
+
+      - name: Upload SVG
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: burn-meter
+          path: burn.svg

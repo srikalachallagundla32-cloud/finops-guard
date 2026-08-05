@@ -79,7 +79,7 @@ func GenerateBurnSVG(meter SVGBurnMeter, outputPath string) error {
   <path d="M 50 140 A 110 110 0 0 1 270 140" stroke="#2a1a35" stroke-width="8" fill="none" />
 
   <!-- Active arc (shows current cost) -->
-  <path d="M 50 140 A 110 110 0 0 1 %(arc_end).0f %(arc_y).0f" stroke="%s" stroke-width="8" fill="none" class="arc" stroke-linecap="round" />
+  <path d="M 50 140 A 110 110 0 0 1 %.0f %.0f" stroke="%s" stroke-width="8" fill="none" class="arc" stroke-linecap="round" />
 
   <!-- Needle -->
   <g class="needle">
@@ -128,7 +128,7 @@ func GenerateBurnSVG(meter SVGBurnMeter, outputPath string) error {
 	return nil
 }
 
-// GeneratePRComment creates a Markdown PR comment with receipt (terse, left-aligned, no filler)
+// GeneratePRComment creates a Markdown PR comment with receipt + wanted posters
 func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) string {
 	var buf strings.Builder
 
@@ -177,6 +177,34 @@ func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) strin
 	buf.WriteString("\n")
 	buf.WriteString(fmt.Sprintf("total: $%.2f / $%.2f budget\n", meter.TotalRisk, meter.Threshold))
 	buf.WriteString("```\n")
+
+	// Wanted posters for high-cost findings
+	if len(issues) > 0 {
+		sort.Slice(issues, func(i, j int) bool {
+			return issues[i].EstCostRisk > issues[j].EstCostRisk
+		})
+
+		for i, issue := range issues {
+			// Loop-scaled monthly cost: per-call × 1000 iterations × 30 runs/month
+			bounty := issue.EstCostRisk * 1000 * 30
+			if bounty > 10.0 { // Only poster findings that cost >$10/month at scale
+				buf.WriteString("\n<details>\n")
+				buf.WriteString(fmt.Sprintf("<summary>🎯 WANTED: %s</summary>\n\n", issue.RuleName))
+				loc := fmt.Sprintf("%s:%d", issue.FilePath, issue.LineNumber)
+				buf.WriteString("```\n")
+				buf.WriteString("  ┌─ WANTED ──────────────────────────────┐\n")
+				buf.WriteString(fmt.Sprintf("  │  \"%s\"\n", issue.RuleName))
+				buf.WriteString(fmt.Sprintf("  │  last seen: %s\n", loc))
+				buf.WriteString(fmt.Sprintf("  │  bleeding:  $%.2f/mo\n", bounty))
+				buf.WriteString("  │\n")
+				buf.WriteString(fmt.Sprintf("  │  BOUNTY: $%.2f/mo — claim it by fixing\n", bounty))
+				buf.WriteString("  └───────────────────────────────────────┘\n")
+				buf.WriteString("```\n")
+				buf.WriteString(fmt.Sprintf("_Claim the bounty: add `[finops: fixed #%d]` to your commit message._\n", i+1))
+				buf.WriteString("</details>\n")
+			}
+		}
+	}
 
 	return buf.String()
 }
