@@ -125,26 +125,39 @@ func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath, repoURL, com
 
 	buf.WriteString(CommentMarker + "\n")
 	buf.WriteString("**FinOps analysis complete for this Pull Request** 🚀\n\n")
-	buf.WriteString(fmt.Sprintf("<img src=\"%s\" width=\"860\" alt=\"FinOps-Guard cost analysis card\" />\n\n", svgPath))
+
+	sort.Slice(issues, func(i, j int) bool { return issues[i].EstCostRisk > issues[j].EstCostRisk })
+
+	// Build the file link up front so the whole card can point at the flagged code.
+	ref := commitSHA
+	if ref == "" {
+		ref = "HEAD"
+	}
+	var fileLink string
+	if repoURL != "" && len(issues) > 0 {
+		fileLink = fmt.Sprintf("%s/blob/%s/%s#L%d", repoURL, ref, strings.TrimPrefix(issues[0].FilePath, "./"), issues[0].LineNumber)
+	}
+
+	img := fmt.Sprintf("<img src=\"%s\" width=\"860\" alt=\"FinOps-Guard cost analysis card\" />", svgPath)
+	if fileLink != "" {
+		// Make the whole card clickable → opens the flagged file (the intuitive
+		// action; painted buttons inside the image are never clickable).
+		buf.WriteString(fmt.Sprintf("<a href=\"%s\">%s</a>\n\n", fileLink, img))
+	} else {
+		buf.WriteString(img + "\n\n")
+	}
 
 	if len(issues) == 0 {
 		buf.WriteString("_No loop-bound API calls detected — safe to merge._\n")
 		return buf.String()
 	}
 
-	sort.Slice(issues, func(i, j int) bool { return issues[i].EstCostRisk > issues[j].EstCostRisk })
 	top := issues[0]
 
-	// Real, clickable links (the ↗ affordances inside the card image are only
-	// painted — these are the working ones).
+	// Real, clickable links row (these work — unlike the painted ↗ in the image).
 	if repoURL != "" {
-		ref := commitSHA
-		if ref == "" {
-			ref = "HEAD"
-		}
-		fileLink := fmt.Sprintf("%s/blob/%s/%s#L%d", repoURL, ref, strings.TrimPrefix(top.FilePath, "./"), top.LineNumber)
 		bestPractices := repoURL + "/blob/main/docs/COST_BEST_PRACTICES.md"
-		buf.WriteString(fmt.Sprintf("📄 [View flagged line](%s) · 📚 [Cost best practices](%s) · 📖 [Repo](%s)\n\n",
+		buf.WriteString(fmt.Sprintf("**📄 [View flagged line](%s)** · 📚 [Cost best practices](%s) · 📖 [Repo](%s)\n\n",
 			fileLink, bestPractices, repoURL))
 	}
 
@@ -381,7 +394,9 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 	s.WriteString(fmt.Sprintf(`<line x1="%.1f" y1="308" x2="%.1f" y2="308" stroke="%s" stroke-width="1"/>`, px+26, rightX, cBorder))
 	s.WriteString(txt(px+26, 345, 14, cMuted, "start", "", "This PR introduces a potential cost increase due to"))
 	s.WriteString(txt(px+26, 366, 14, cMuted, "start", "", "loop-bound API calls."))
-	s.WriteString(txt(px+26, 430, 14, "#58a6ff", "start", "", "Learn more in FinOps-Guard Docs ↗"))
+	// Actionable links live in the comment markdown below the card (a painted
+	// link inside an image can never be clicked).
+	s.WriteString(txt(px+26, 430, 13, cMuted, "start", "", "Links & fix suggestion below ↓"))
 
 	// ---- Issue panel + Recommended Action (only when there are findings) ----
 	if len(issues) > 0 {
@@ -407,8 +422,6 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 		// code box
 		s.WriteString(rrect(70, 640, 1060, 130, 8, cBg, "#5c2b2b", 1))
 		s.WriteString(mono(92, 674, 15, cRed, fmt.Sprintf("[%s] %s:%d (%s)", top.ID, top.FilePath, top.LineNumber, top.TargetAPI)))
-		s.WriteString(rrect(1000, 652, 108, 30, 6, cPanel, cBorder, 1))
-		s.WriteString(txt(1054, 672, 13, cText, "middle", "", "View file ↗"))
 		// snippet with light syntax split
 		snip := top.CodeSnippet
 		if snip == "" {
@@ -434,8 +447,6 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 			s.WriteString(fmt.Sprintf(`<circle cx="82" cy="%.1f" r="3" fill="%s"/>`, y-5, cGreen))
 			s.WriteString(txt(98, y, 15, cText, "start", "", r))
 		}
-		s.WriteString(rrect(930, 895, 210, 44, 8, "#0f1a12", "#238636", 1))
-		s.WriteString(txt(1035, 922, 14, cGreen, "middle", "bold", "Learn Best Practices ↗"))
 	}
 
 	// ---- Footer ----
