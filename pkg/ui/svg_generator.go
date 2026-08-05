@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -13,87 +14,111 @@ type SVGBurnMeter struct {
 	IssueCount int
 }
 
-// GenerateBurnSVG creates an animated SVG burn meter and writes it to a file
+// GenerateBurnSVG creates a gauge-style SVG meter (like a dashboard gauge)
 func GenerateBurnSVG(meter SVGBurnMeter, outputPath string) error {
 	ratio := meter.TotalRisk / meter.Threshold
 	if ratio > 1.0 {
 		ratio = 1.0
 	}
 
-	// Determine flame color based on intensity
-	flameColor := "#5DCAA5" // mint (safe)
-	if ratio > 0.75 {
-		flameColor = "#F09595" // red (inferno)
+	// Gauge colors: green → yellow → red → black
+	gaugeColor := "#5DCAA5" // mint (safe)
+	gaugeLabel := "SAFE"
+	if ratio > 0.9 {
+		gaugeColor = "#1a0a00" // black (inferno)
+		gaugeLabel = "INFERNO"
+	} else if ratio > 0.75 {
+		gaugeColor = "#F09595" // red (on fire)
+		gaugeLabel = "ON FIRE"
 	} else if ratio > 0.6 {
-		flameColor = "#ED93B1" // pink (on fire)
+		gaugeColor = "#ED93B1" // pink (sweating)
+		gaugeLabel = "SWEATING"
 	} else if ratio > 0.25 {
-		flameColor = "#FAC775" // butter (sweating)
+		gaugeColor = "#FAC775" // butter (warning)
+		gaugeLabel = "CAUTION"
 	}
 
-	// SVG with embedded CSS animations
-	svg := fmt.Sprintf(`<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+	// Calculate needle angle (0-180 degrees across the gauge arc)
+	needleAngle := -90 + (ratio * 180)
+
+	// SVG gauge meter (asymmetric, designed to feel intentional)
+	svg := fmt.Sprintf(`<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <style>
-      @keyframes flicker {
-        0%% { opacity: 0.6; }
+      @keyframes needleShake {
+        0%% { transform: rotate(%.2fdeg); }
+        50%% { transform: rotate(%.2fdeg); }
+        100%% { transform: rotate(%.2fdeg); }
+      }
+      @keyframes pulseGauge {
+        0%%, 100%% { opacity: 0.9; }
         50%% { opacity: 1.0; }
-        100%% { opacity: 0.6; }
       }
-      @keyframes flameWave {
-        0%% { transform: scaleY(0.8); }
-        50%% { transform: scaleY(1.1); }
-        100%% { transform: scaleY(0.8); }
-      }
-      @keyframes glow {
-        0%% { filter: drop-shadow(0 0 8px %s); }
-        50%% { filter: drop-shadow(0 0 16px %s); }
-        100%% { filter: drop-shadow(0 0 8px %s); }
-      }
-      .header { font-family: monospace; font-size: 20px; font-weight: bold; text-anchor: middle; fill: #ED93B1; }
-      .label { font-family: monospace; font-size: 14px; text-anchor: middle; fill: #AFA9EC; }
-      .value { font-family: monospace; font-size: 18px; font-weight: bold; text-anchor: middle; fill: %s; }
-      .flame { animation: flicker 0.4s infinite, flameWave 0.6s infinite; transform-origin: center; }
-      .glow-text { animation: glow 1s infinite; }
+      .gauge-bg { fill: #0d0713; }
+      .gauge-text { font-family: 'Courier New', monospace; font-size: 11px; fill: #AFA9EC; }
+      .gauge-value { font-family: 'Courier New', monospace; font-size: 18px; font-weight: bold; fill: %s; }
+      .gauge-label { font-family: 'Courier New', monospace; font-size: 13px; font-weight: bold; fill: %s; letter-spacing: 1px; }
+      .needle { animation: needleShake 0.15s infinite; transform-origin: 160px 140px; }
+      .arc { animation: pulseGauge 1.5s ease-in-out infinite; }
     </style>
   </defs>
 
   <!-- Background -->
-  <rect width="400" height="300" fill="#0d0713" />
+  <rect width="320" height="200" class="gauge-bg" />
 
-  <!-- Header -->
-  <text x="200" y="35" class="header glow-text">🔥 FINOPS BURN METER</text>
+  <!-- Gauge Arc (semicircle) -->
+  <defs>
+    <linearGradient id="gaugeGrad" x1="50" y1="140" x2="270" y2="140">
+      <stop offset="0%%" style="stop-color:#5DCAA5;stop-opacity:0.3" />
+      <stop offset="50%%" style="stop-color:#FAC775;stop-opacity:0.6" />
+      <stop offset="100%%" style="stop-color:#F09595;stop-opacity:1" />
+    </linearGradient>
+  </defs>
 
-  <!-- Cost Display -->
-  <text x="200" y="80" class="label">PROJECTED COST</text>
-  <text x="200" y="105" class="value">$%.2f USD</text>
+  <!-- Arc background (full gauge outline) -->
+  <path d="M 50 140 A 110 110 0 0 1 270 140" stroke="#2a1a35" stroke-width="8" fill="none" />
 
-  <!-- Budget Display -->
-  <text x="80" y="150" class="label">BUDGET</text>
-  <text x="80" y="175" class="value">$%.2f</text>
+  <!-- Active arc (shows current cost) -->
+  <path d="M 50 140 A 110 110 0 0 1 %(arc_end).0f %(arc_y).0f" stroke="%s" stroke-width="8" fill="none" class="arc" stroke-linecap="round" />
 
-  <text x="320" y="150" class="label">REMAINING</text>
-  <text x="320" y="175" class="value">$%.2f</text>
+  <!-- Needle -->
+  <g class="needle">
+    <line x1="160" y1="140" x2="160" y2="40" stroke="%s" stroke-width="2" />
+    <circle cx="160" cy="140" r="3" fill="%s" />
+  </g>
 
-  <!-- Burn Intensity Bar -->
-  <rect x="50" y="200" width="300" height="20" fill="#1a0e28" stroke="#AFA9EC" stroke-width="1" />
-  <rect x="50" y="200" width="%.0f" height="20" fill="%s" class="flame" />
+  <!-- Tick marks (0%%, 50%%, 100%%) -->
+  <line x1="50" y1="140" x2="50" y2="150" stroke="#AFA9EC" stroke-width="1" />
+  <text x="45" y="165" class="gauge-text" text-anchor="end">0%%</text>
 
-  <!-- Status Text -->
-  <text x="200" y="245" class="label">Issues: %d</text>
-  <text x="200" y="270" class="label">Intensity: %.1f%%</text>
+  <line x1="160" y1="30" x2="160" y2="20" stroke="#AFA9EC" stroke-width="1" />
+  <text x="160" y="15" class="gauge-text" text-anchor="middle">50%%</text>
 
-  <!-- Footer -->
-  <text x="200" y="295" class="label" style="font-size: 11px;">Generated by finops-guard</text>
+  <line x1="270" y1="140" x2="270" y2="150" stroke="#AFA9EC" stroke-width="1" />
+  <text x="275" y="165" class="gauge-text" text-anchor="start">100%%</text>
+
+  <!-- Cost values (left side, asymmetric) -->
+  <text x="20" y="35" class="gauge-value">$%.2f</text>
+  <text x="20" y="52" class="gauge-text">/ $%.2f</text>
+
+  <!-- Status label (right side, asymmetric) -->
+  <text x="300" y="85" class="gauge-label" text-anchor="end">%s</text>
+  <text x="300" y="105" class="gauge-text" text-anchor="end">%%%.0f used</text>
+
+  <!-- Issues count (bottom, left) -->
+  <text x="20" y="190" class="gauge-text">%d issues</text>
 </svg>`,
-		flameColor, flameColor, flameColor,
-		flameColor,
+		needleAngle, needleAngle, needleAngle,
+		gaugeColor, gaugeColor,
+		50+220*ratio, 140-110*ratio, // arc end point (semicircle)
+		gaugeColor,
+		gaugeColor,
+		gaugeColor,
 		meter.TotalRisk,
 		meter.Threshold,
-		meter.Threshold-meter.TotalRisk,
-		300.0*ratio,
-		flameColor,
-		meter.IssueCount,
+		gaugeLabel,
 		ratio*100,
+		meter.IssueCount,
 	)
 
 	if err := os.WriteFile(outputPath, []byte(svg), 0644); err != nil {
@@ -103,50 +128,54 @@ func GenerateBurnSVG(meter SVGBurnMeter, outputPath string) error {
 	return nil
 }
 
-// GeneratePRComment creates a Markdown PR comment with thermal receipt and SVG reference
+// GeneratePRComment creates a Markdown PR comment with receipt (terse, left-aligned, no filler)
 func GeneratePRComment(meter SVGBurnMeter, issues []Issue, svgPath string) string {
 	var buf strings.Builder
 
-	// SVG reference (relative path for GitHub)
+	// Decision first (top, bold)
+	ratio := meter.TotalRisk / meter.Threshold
+	decision := "✅ SAFE TO MERGE"
+	if ratio > 0.9 {
+		decision = "🛑 BUDGET EXCEEDED"
+	} else if ratio > 0.75 {
+		decision = "⚠️  BUDGET ALERT"
+	} else if ratio > 0.6 {
+		decision = "⚡ APPROACHING LIMIT"
+	}
+	buf.WriteString(decision + "\n\n")
+
+	// SVG reference
 	buf.WriteString(fmt.Sprintf("![Burn Meter](%s)\n\n", svgPath))
 
-	// Thermal printer receipt
+	// Receipt (no decoration, just facts)
 	buf.WriteString("```\n")
-	buf.WriteString(" ═══════════════════════════════════════════════════\n")
-	buf.WriteString("        FINOPS-GUARD ★ COST RECEIPT\n")
-	buf.WriteString("        Virtual CFO · Automated Analysis\n")
-	buf.WriteString(" ───────────────────────────────────────────────────\n")
 
-	// Line items
 	if len(issues) == 0 {
-		buf.WriteString("  NO ISSUES DETECTED · SAFE TO MERGE\n")
+		buf.WriteString("no issues\n")
 	} else {
-		for i, issue := range issues {
-			cost := issue.EstCostRisk
-			buf.WriteString(fmt.Sprintf("  %d× %s\n", i+1, strings.ToUpper(issue.RuleName)))
-			buf.WriteString(fmt.Sprintf("     %s:%d  $%.2f/run\n", issue.FilePath, issue.LineNumber, cost))
+		// Sort by cost (highest first)
+		sort.Slice(issues, func(i, j int) bool {
+			return issues[i].EstCostRisk > issues[j].EstCostRisk
+		})
+
+		// Show top 5 findings
+		limit := len(issues)
+		if limit > 5 {
+			limit = 5
+		}
+
+		for _, issue := range issues[:limit] {
+			buf.WriteString(fmt.Sprintf("%s:%d  +$%.2f/run\n", issue.FilePath, issue.LineNumber, issue.EstCostRisk))
+			buf.WriteString(fmt.Sprintf("  %s\n", issue.RuleName))
+		}
+
+		if len(issues) > 5 {
+			buf.WriteString(fmt.Sprintf("\n+%d more issues\n", len(issues)-5))
 		}
 	}
 
-	buf.WriteString(" ───────────────────────────────────────────────────\n")
-	buf.WriteString(fmt.Sprintf("  SUBTOTAL ................. $%.2f\n", meter.TotalRisk))
-	buf.WriteString(fmt.Sprintf("  BUDGET REMAINING ........ $%.2f\n", meter.Threshold-meter.TotalRisk))
-
-	// Status
-	status := "SAFE"
-	if meter.TotalRisk/meter.Threshold > 0.75 {
-		status = "INFERNO"
-	} else if meter.TotalRisk/meter.Threshold > 0.6 {
-		status = "ON FIRE"
-	} else if meter.TotalRisk/meter.Threshold > 0.25 {
-		status = "SWEATING"
-	}
-	buf.WriteString(fmt.Sprintf("  STATUS .................. %s\n", status))
-
-	buf.WriteString(" ───────────────────────────────────────────────────\n")
-	buf.WriteString("   NO REFUNDS. CLOUD BILLS ARE FOREVER.\n")
-	buf.WriteString("      thank you, come again 🧾\n")
-	buf.WriteString(" ═══════════════════════════════════════════════════\n")
+	buf.WriteString("\n")
+	buf.WriteString(fmt.Sprintf("total: $%.2f / $%.2f budget\n", meter.TotalRisk, meter.Threshold))
 	buf.WriteString("```\n")
 
 	return buf.String()
