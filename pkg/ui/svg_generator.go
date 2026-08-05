@@ -374,9 +374,7 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 	if fillRatio < 0.03 {
 		fillRatio = 0.03
 	}
-	theta := math.Pi * fillRatio
-	mx := cx - R*math.Cos(theta)
-	my := cy - R*math.Sin(theta)
+	finalAngle := fillRatio * 180 // marker rests at the value; animation sweeps to it
 	s.WriteString(fmt.Sprintf(`<ellipse cx="%.0f" cy="%.0f" rx="66" ry="14" fill="url(#portal)" opacity="0.6"/>`, cx, cy+6))
 	// Faint blurred halo behind, then a CRISP arc on top (the blur no longer
 	// softens the meter itself).
@@ -385,7 +383,14 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s"/>`, cx-R, cy, cGreen))
 	s.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="7" fill="%s"/>`, cx+R, cy, cRed))
 	s.WriteString(txt(cx, cy-R-10, 14, cMuted, "middle", "", "50%"))
-	s.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" font-size="30" text-anchor="middle">🚀</text>`, mx, my+8))
+	// Rocket marker: rests at the value (base transform) and, where animation is
+	// supported, sweeps up-and-down before settling there. The base rotate() is
+	// the correct static frame for clients that don't animate.
+	s.WriteString(fmt.Sprintf(`<style>`+
+		`@keyframes gaugeSweep{0%%{transform:rotate(0deg)}28%%{transform:rotate(158deg)}46%%{transform:rotate(38deg)}64%%{transform:rotate(122deg)}80%%{transform:rotate(60deg)}100%%{transform:rotate(%.2fdeg)}}`+
+		`.gmarker{transform-origin:%.1fpx %.1fpx;transform:rotate(%.2fdeg);animation:gaugeSweep 2.4s cubic-bezier(.34,1.15,.4,1) .25s 1 both}`+
+		`</style>`, finalAngle, cx, cy, finalAngle))
+	s.WriteString(fmt.Sprintf(`<g class="gmarker"><text x="%.1f" y="%.1f" font-size="30" text-anchor="middle">🚀</text></g>`, cx-R, cy+8))
 	s.WriteString(txt(cx-R, cy+28, 14, cMuted, "middle", "", "0%"))
 	s.WriteString(txt(cx-R, cy+46, 12, cMuted, "middle", "", "used"))
 	s.WriteString(txt(cx+R, cy+28, 14, cMuted, "middle", "", "100%"))
