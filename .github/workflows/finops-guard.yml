@@ -204,6 +204,22 @@ jobs:
               output: { title: 'Cost Analysis', summary: output }
             });
 
+      # On merges to a tracked branch, stamp the commit with a cost note so
+      # `git log --notes=refs/notes/finops` becomes a spend ledger (Phase 5).
+      - name: Record spend note
+        if: github.event_name == 'push'
+        run: |
+          TARGET=$(find . -type f \( -name '*.py' -o -name '*.ts' -o -name '*.js' \) \
+            -not -path './vendor/*' -not -path './node_modules/*' \
+            -not -path './test/*' -not -path '*/testdata/*' \
+            -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -n "$TARGET" ]; then
+            git config user.name  "finops-guard[bot]"
+            git config user.email "finops-guard@users.noreply.github.com"
+            ./scripts/finops-ledger.sh record "$TARGET" "${{ github.sha }}" || true
+            ./scripts/finops-ledger.sh push || true
+          fi
+
       - name: Upload SVG artifact
         if: always()
         uses: actions/upload-artifact@v4

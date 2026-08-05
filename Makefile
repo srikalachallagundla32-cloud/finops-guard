@@ -4,7 +4,11 @@ CMD_DIR     := ./cmd/finops-guard
 PRICING_FILE := pricing.json
 SAMPLE_FILE := test/testdata/ai_slop_sample.py
 
-.PHONY: build run demo test cover vet fmt clean
+.PHONY: build run demo ledger test cover vet fmt clean
+
+ledger: build
+	./scripts/finops-ledger.sh record $(SAMPLE_FILE)
+	./scripts/finops-ledger.sh log -n 5
 
 build:
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)

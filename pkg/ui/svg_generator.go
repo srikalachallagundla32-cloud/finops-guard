@@ -286,7 +286,7 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 	}
 
 	var s strings.Builder
-	s.WriteString(`<svg viewBox="0 0 1200 1120" xmlns="http://www.w3.org/2000/svg">`)
+	s.WriteString(`<svg width="1200" height="1120" viewBox="0 0 1200 1120" xmlns="http://www.w3.org/2000/svg">`)
 	s.WriteString(fmt.Sprintf(`<rect width="1200" height="1120" rx="14" fill="%s"/>`, cBg))
 	s.WriteString(fmt.Sprintf(`<rect x="4" y="4" width="1192" height="1112" rx="12" fill="none" stroke="%s" stroke-width="1.5"/>`, cBorder))
 

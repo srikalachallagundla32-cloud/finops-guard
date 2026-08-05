@@ -26,7 +26,15 @@ func main() {
 	generatePRComment := flag.Bool("generate-pr-comment", false, "Generate Markdown PR comment with receipt + SVG reference (requires --output-svg)")
 	svgURL := flag.String("svg-url", "", "Absolute URL for the SVG image in the PR comment (falls back to ./<output-svg> when empty)")
 	findingsJSON := flag.String("findings-json", "", "Write findings (with committable suggestion text) to a JSON file for the CI suggestion step")
+	emitNote := flag.Bool("note", false, "Print a one-line spend-ledger note for git notes (no other output), then exit")
 	flag.Parse()
+
+	// In --note mode, stdout must be a single clean ledger line: route all
+	// human banners to stderr.
+	banner := os.Stdout
+	if *emitNote {
+		banner = os.Stderr
+	}
 
 	_, ok := ui.ByName(*themeName)
 	if !ok {
@@ -34,8 +42,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("🛡️  FinOps-Guard CLI v0.1.0 — Static Cost Analysis Engine")
-	fmt.Println("---------------------------------------------------------")
+	fmt.Fprintln(banner, "🛡️  FinOps-Guard CLI v0.1.0 — Static Cost Analysis Engine")
+	fmt.Fprintln(banner, "---------------------------------------------------------")
 
 	catalog, err := costengine.LoadPricingCatalog(*pricingPath)
 	if err != nil {
@@ -43,13 +51,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Loaded Pricing Catalog (Currency: %s, Region: %s)\n", catalog.Currency, catalog.RegionDefault)
+	fmt.Fprintf(banner, "✅ Loaded Pricing Catalog (Currency: %s, Region: %s)\n", catalog.Currency, catalog.RegionDefault)
 
 	iterations := 1000
 	estimatedCost := catalog.CalculateLLMLoopCost("gpt-4o", 1000, 500, iterations)
 
-	fmt.Printf("\n[Simulation] 1 loop detected executing 'gpt-4o' over %d iterations:\n", iterations)
-	fmt.Printf("💰 Projected Cost Risk: $%.2f USD\n", estimatedCost)
+	fmt.Fprintf(banner, "\n[Simulation] 1 loop detected executing 'gpt-4o' over %d iterations:\n", iterations)
+	fmt.Fprintf(banner, "💰 Projected Cost Risk: $%.2f USD\n", estimatedCost)
 
 	if *scanPath == "" {
 		return
@@ -70,6 +78,14 @@ func main() {
 	}
 
 	costFailThreshold := config.FailOnCostThreshold(guardConfigPath)
+
+	// --note: emit a single-line spend-ledger entry for `git notes` and exit.
+	// Format: finops: +$<perRun>/run · ~$<monthly>/mo · <n> issue(s)
+	if *emitNote {
+		monthly := totalRisk * 1000 * 30
+		fmt.Printf("finops: +$%.2f/run · ~$%.0f/mo · %d issue(s)\n", totalRisk, monthly, len(issues))
+		return
+	}
 
 	// Generate SVG if requested
 	if *outputSVG != "" {
