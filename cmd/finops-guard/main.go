@@ -20,6 +20,8 @@ func main() {
 	scanPath := flag.String("scan", "", "Path to a Python/TypeScript file to scan for loop-bound API calls")
 	themeName := flag.String("theme", "tactical", "UI theme for legacy --no-tui mode: "+strings.Join(ui.ThemeNames(), ", "))
 	noTUI := flag.Bool("no-tui", false, "Disable animated TUI, print static output instead")
+	outputSVG := flag.String("output-svg", "", "Write animated SVG burn meter to file (e.g., burn.svg)")
+	generatePRComment := flag.Bool("generate-pr-comment", false, "Generate Markdown PR comment with receipt + SVG reference (requires --output-svg)")
 	flag.Parse()
 
 	_, ok := ui.ByName(*themeName)
@@ -62,6 +64,36 @@ func main() {
 	}
 
 	costFailThreshold := config.FailOnCostThreshold(guardConfigPath)
+
+	// Generate SVG if requested
+	if *outputSVG != "" {
+		meter := ui.SVGBurnMeter{
+			TotalRisk:  totalRisk,
+			Threshold:  costFailThreshold,
+			IssueCount: len(issues),
+		}
+		if err := ui.GenerateBurnSVG(meter, *outputSVG); err != nil {
+			fmt.Printf("❌ [Error] Generating SVG: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Generated SVG burn meter: %s\n", *outputSVG)
+
+		// Generate PR comment if requested
+		if *generatePRComment {
+			// Convert issues to ui.Issue for comment generation
+			commentIssues := make([]ui.Issue, len(issues))
+			for i, issue := range issues {
+				commentIssues[i] = ui.Issue{
+					FilePath:    issue.FilePath,
+					LineNumber:  issue.LineNumber,
+					RuleName:    issue.RuleName,
+					EstCostRisk: issue.EstCostRisk,
+				}
+			}
+			prComment := ui.GeneratePRComment(meter, commentIssues, "./"+*outputSVG)
+			fmt.Println("\n" + prComment)
+		}
+	}
 
 	if *noTUI {
 		// Legacy static output
