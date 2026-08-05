@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/your-username/finops-guard/internal/tui"
 	"github.com/your-username/finops-guard/pkg/analyzer"
 	"github.com/your-username/finops-guard/pkg/config"
 	"github.com/your-username/finops-guard/pkg/costengine"
@@ -17,7 +18,8 @@ const guardConfigPath = ".finops-guard.yml"
 func main() {
 	pricingPath := flag.String("pricing", "pricing.json", "Path to the pricing catalog JSON file")
 	scanPath := flag.String("scan", "", "Path to a Python/TypeScript file to scan for loop-bound API calls")
-	themeName := flag.String("theme", "tactical", "Cockpit HUD theme: "+strings.Join(ui.ThemeNames(), ", "))
+	themeName := flag.String("theme", "tactical", "UI theme for legacy --no-tui mode: "+strings.Join(ui.ThemeNames(), ", "))
+	noTUI := flag.Bool("no-tui", false, "Disable animated TUI, print static output instead")
 	flag.Parse()
 
 	_, ok := ui.ByName(*themeName)
@@ -61,8 +63,27 @@ func main() {
 
 	costFailThreshold := config.FailOnCostThreshold(guardConfigPath)
 
-	if err := ui.RunNeonBurnTUI(issues, totalRisk, costFailThreshold); err != nil {
-		fmt.Printf("❌ [Error] Running interactive TUI: %v\n", err)
+	if *noTUI {
+		// Legacy static output
+		fmt.Printf("\n🔍 Scanning %s for loop-bound API calls...\n", *scanPath)
+		if len(issues) == 0 {
+			fmt.Println("✅ No loop-bound API risks detected.")
+		} else {
+			fmt.Printf("🚨 %d issue(s) found:\n", len(issues))
+			for _, issue := range issues {
+				fmt.Printf("  [%s] %s:%d (%s, severity=%s)\n      %s\n",
+					issue.ID, issue.FilePath, issue.LineNumber, issue.TargetAPI, issue.Severity, issue.CodeSnippet)
+			}
+		}
+		if len(issues) > 0 {
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Animated Cost Reactor TUI (default)
+	if err := tui.Run(issues, totalRisk, costFailThreshold); err != nil {
+		fmt.Printf("❌ [Error] Running Cost Reactor: %v\n", err)
 		os.Exit(1)
 	}
 
