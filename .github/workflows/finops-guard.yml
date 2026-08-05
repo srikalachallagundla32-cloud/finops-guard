@@ -37,9 +37,11 @@ jobs:
       - name: Scan codebase
         id: scan
         run: |
-          # Ref the SVG will live on: PR head branch, or the pushed branch.
-          REF="${{ github.head_ref || github.ref_name }}"
-          SVG_URL="https://raw.githubusercontent.com/${{ github.repository }}/${REF}/assets/burn.svg"
+          # The card image is hosted on a dedicated finops-assets branch (keyed
+          # by PR number) so the PR branch head never changes — keeping checks
+          # valid and the commit history clean.
+          SLOT="pr-${{ github.event.pull_request.number || 'main' }}"
+          SVG_URL="https://raw.githubusercontent.com/${{ github.repository }}/finops-assets/${SLOT}/burn.svg"
 
           # Scan the largest application source file, deterministically,
           # ignoring vendored deps and test fixtures (which aren't shipped code).
@@ -65,16 +67,34 @@ jobs:
           echo "----- comment.md -----"; cat comment.md
           echo "----- findings.json -----"; cat findings.json 2>/dev/null || echo "[]"
 
-      - name: Commit burn meter
+      - name: Publish burn meter to assets branch
+        env:
+          PRN: ${{ github.event.pull_request.number }}
         run: |
-          if [ -n "$(git status --porcelain assets/burn.svg)" ]; then
-            git config user.name  "finops-guard[bot]"
-            git config user.email "finops-guard@users.noreply.github.com"
-            git add assets/burn.svg
-            git commit -m "chore(finops): update burn meter [skip ci]"
-            git push origin HEAD:"${{ github.head_ref || github.ref_name }}"
+          BR=finops-assets
+          DEST="pr-${PRN:-main}"
+          git config user.name  "finops-guard[bot]"
+          git config user.email "finops-guard@users.noreply.github.com"
+          git fetch origin "$BR" 2>/dev/null || true
+
+          tmp="$(mktemp -d)"
+          if git show-ref --verify --quiet "refs/remotes/origin/$BR"; then
+            git worktree add "$tmp" "origin/$BR"
+            git -C "$tmp" checkout -B "$BR"
           else
+            git worktree add --detach "$tmp" HEAD
+            git -C "$tmp" checkout --orphan "$BR"
+            git -C "$tmp" rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          mkdir -p "$tmp/$DEST"
+          cp assets/burn.svg "$tmp/$DEST/burn.svg"
+          git -C "$tmp" add "$DEST/burn.svg"
+          if git -C "$tmp" diff --cached --quiet; then
             echo "Burn meter unchanged."
+          else
+            git -C "$tmp" commit -m "chore(finops): burn meter for $DEST"
+            git -C "$tmp" push origin "HEAD:$BR"
           fi
 
       - name: Post / update PR comment
