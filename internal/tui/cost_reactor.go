@@ -369,18 +369,32 @@ func (m *CostReactor) View() string {
 
 	var doc strings.Builder
 
-	// Header bar
+	// Header bar with separator
 	headerLeft := lipgloss.NewStyle().Foreground(colorPink).Bold(true).Render("🛡️ FINOPS-GUARD")
-	headerRight := lipgloss.NewStyle().Foreground(status.Color()).Bold(true).Render(fmt.Sprintf("STATUS: %s", status))
+	headerRight := lipgloss.NewStyle().Foreground(status.Color()).Bold(true).Render(fmt.Sprintf("⚡ %s", status))
 	headerVersion := lipgloss.NewStyle().Foreground(colorLavender).Render("v0.1.0")
-	headerBar := fmt.Sprintf("%s %s %s", headerLeft, headerVersion, headerRight)
-	doc.WriteString(headerBar + "\n\n")
+	padding := strings.Repeat(" ", m.width-len("🛡️ FINOPS-GUARD ")-len("v0.1.0 ")-len(fmt.Sprintf("⚡ %s", status)))
+	headerBar := fmt.Sprintf("%s %s%s%s", headerLeft, headerVersion, padding, headerRight)
+	doc.WriteString(headerBar + "\n")
+	doc.WriteString(lipgloss.NewStyle().Foreground(colorMagenta).Render(strings.Repeat("─", m.width)) + "\n\n")
 
-	// Code inspector (simplified for now)
+	// Code inspector (detailed)
 	if len(m.issues) > 0 {
 		selected := m.issues[m.cursor]
-		inspector := fmt.Sprintf("📍 %s:%d — $%.4f/run  [%s]", selected.FilePath, selected.LineNumber, selected.EstCostRisk, selected.ID)
-		doc.WriteString(lipgloss.NewStyle().Foreground(colorCoral).Render(inspector) + "\n\n")
+		inspectorTitle := lipgloss.NewStyle().Foreground(colorCoral).Bold(true).Render("📍 CURRENT LEAK")
+		doc.WriteString(inspectorTitle + "\n")
+		fileLine := lipgloss.NewStyle().Foreground(colorLavender).Render(fmt.Sprintf("  Location: %s:%d", selected.FilePath, selected.LineNumber))
+		doc.WriteString(fileLine + "\n")
+		costLine := lipgloss.NewStyle().Foreground(colorButter).Render(fmt.Sprintf("  Cost/run:  $%.4f [%s]", selected.EstCostRisk, selected.ID))
+		doc.WriteString(costLine + "\n")
+		severityColor := colorRed
+		if selected.Severity == "LOW" {
+			severityColor = colorMint
+		} else if selected.Severity == "MEDIUM" {
+			severityColor = colorButter
+		}
+		severityLine := lipgloss.NewStyle().Foreground(severityColor).Render(fmt.Sprintf("  Severity:  %s", selected.Severity))
+		doc.WriteString(severityLine + "\n\n")
 	}
 
 	// Findings list
@@ -389,11 +403,19 @@ func (m *CostReactor) View() string {
 		doc.WriteString(lipgloss.NewStyle().Foreground(colorMint).Render("None.\n\n"))
 	} else {
 		for i, issue := range m.issues {
-			marker := "  "
+			var lineStyle lipgloss.Style
 			if i == m.cursor {
-				marker = "▌ " // Left rule for selected
+				// Highlight selected row with background + marker
+				lineStyle = lipgloss.NewStyle().
+					Background(lipgloss.Color("#1a0e28")).
+					Foreground(colorCoral).
+					Bold(true)
+				line := fmt.Sprintf("▶ [%s] $%.4f/run — %s", issue.ID, issue.EstCostRisk, issue.RuleName)
+				doc.WriteString(lineStyle.Render(line) + "\n")
+			} else {
+				line := fmt.Sprintf("  [%s] $%.4f/run — %s", issue.ID, issue.EstCostRisk, issue.RuleName)
+				doc.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render(line) + "\n")
 			}
-			doc.WriteString(fmt.Sprintf("%s[%s] $%.4f/run — %s\n", marker, issue.ID, issue.EstCostRisk, issue.RuleName))
 		}
 		doc.WriteString("\n")
 	}
@@ -402,16 +424,17 @@ func (m *CostReactor) View() string {
 	doc.WriteString(m.fire.RenderHalfBlocks(overlay))
 	doc.WriteString("\n\n")
 
-	// CFO quote bar
+	// CFO quote bar with background
+	doc.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render("─────────────────────────────────────────────────────────\n"))
+	cfoLabel := lipgloss.NewStyle().Foreground(colorMint).Bold(true).Render("💼 CFO")
 	cfoStyle := lipgloss.NewStyle().Italic(true).Foreground(status.Color())
-	doc.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render("💼 CFO: "))
-	doc.WriteString(cfoStyle.Render(m.selectedQuote) + "\n")
+	doc.WriteString(cfoLabel + "  " + cfoStyle.Render(m.selectedQuote) + "\n")
 
 	// Status bar
 	doc.WriteString("\n")
 	burnPill := lipgloss.NewStyle().Bold(true).Foreground(colorBg).Background(status.Color()).Padding(0, 1).Render(fmt.Sprintf("BURN: $%.2f / $%.2f", m.totalRisk, m.threshold))
-	frameStr := fmt.Sprintf("FRAME: %04d │ [↑/↓] navigate  [q] quit", m.frameCount)
-	doc.WriteString(burnPill + " " + lipgloss.NewStyle().Foreground(colorLavender).Render(frameStr))
+	frameStr := fmt.Sprintf("FRAME: %04d │ [↑/↓] navigate [↵] inspect [q] quit", m.frameCount)
+	doc.WriteString(burnPill + "  " + lipgloss.NewStyle().Foreground(colorLavender).Render(frameStr))
 
 	return doc.String()
 }
