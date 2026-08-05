@@ -22,6 +22,7 @@ func main() {
 	noTUI := flag.Bool("no-tui", false, "Disable animated TUI, print static output instead")
 	outputSVG := flag.String("output-svg", "", "Write animated SVG burn meter to file (e.g., burn.svg)")
 	generatePRComment := flag.Bool("generate-pr-comment", false, "Generate Markdown PR comment with receipt + SVG reference (requires --output-svg)")
+	svgURL := flag.String("svg-url", "", "Absolute URL for the SVG image in the PR comment (falls back to ./<output-svg> when empty)")
 	flag.Parse()
 
 	_, ok := ui.ByName(*themeName)
@@ -90,7 +91,11 @@ func main() {
 					EstCostRisk: issue.EstCostRisk,
 				}
 			}
-			prComment := ui.GeneratePRComment(meter, commentIssues, "./"+*outputSVG)
+			imgSrc := "./" + *outputSVG
+			if *svgURL != "" {
+				imgSrc = *svgURL
+			}
+			prComment := ui.GeneratePRComment(meter, commentIssues, imgSrc)
 			fmt.Println("\n" + prComment)
 		}
 	}

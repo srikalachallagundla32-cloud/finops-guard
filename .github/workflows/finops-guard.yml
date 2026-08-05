@@ -14,7 +14,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       checks: write
       pull-requests: write
 
@@ -32,12 +32,42 @@ jobs:
       - name: Scan codebase
         id: scan
         run: |
+          # Ref the SVG will live on: PR head branch, or the pushed branch.
+          REF="${{ github.head_ref || github.ref_name }}"
+          SVG_URL="https://raw.githubusercontent.com/${{ github.repository }}/${REF}/assets/burn.svg"
+
+          # Scan the most expensive-looking source file (largest by line count),
+          # deterministically, ignoring vendored/test fixtures.
+          TARGET=$(find . -type f \( -name '*.py' -o -name '*.ts' -o -name '*.js' \) \
+            -not -path './vendor/*' -not -path './node_modules/*' \
+            -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+          echo "Scanning: ${TARGET:-<none>}"
+
+          mkdir -p assets
           ./bin/finops-guard \
             --pricing=pricing.json \
-            --scan=$(find . -name '*.py' -o -name '*.ts' -o -name '*.js' | head -1) \
-            --output-svg=burn.svg \
+            --scan="${TARGET:-test/testdata/ai_slop_sample.py}" \
+            --output-svg=assets/burn.svg \
+            --svg-url="$SVG_URL" \
             --generate-pr-comment \
-            --no-tui > comment.md 2>&1 || true
+            --no-tui > raw.md 2>&1 || true
+
+          # Strip the CLI banner lines; keep only the PR comment (from the decision line on).
+          awk '/SAFE TO MERGE|BUDGET|APPROACHING LIMIT/{f=1} f' raw.md > comment.md
+          test -s comment.md || cp raw.md comment.md
+          cat comment.md
+
+      - name: Commit burn meter
+        run: |
+          if [ -n "$(git status --porcelain assets/burn.svg)" ]; then
+            git config user.name  "finops-guard[bot]"
+            git config user.email "finops-guard@users.noreply.github.com"
+            git add assets/burn.svg
+            git commit -m "chore(finops): update burn meter [skip ci]"
+            git push origin HEAD:"${{ github.head_ref || github.ref_name }}"
+          else
+            echo "Burn meter unchanged."
+          fi
 
       - name: Post PR Comment
         if: github.event_name == 'pull_request'
@@ -46,8 +76,7 @@ jobs:
           script: |
             const fs = require('fs');
             const comment = fs.readFileSync('comment.md', 'utf8');
-
-            github.rest.issues.createComment({
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -55,41 +84,39 @@ jobs:
             });
 
       - name: Create Check Run
-        if: github.event_name == 'push'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const output = fs.readFileSync('comment.md', 'utf8');
 
-            // Determine status from output
             let conclusion = 'success';
-            let status_text = '✅ finops-guard — the CFO sleeps soundly';
-
-            if (output.includes('BUDGET ALERT') || output.includes('APPROACHING LIMIT')) {
-              conclusion = 'neutral';
-              status_text = '⚠️  finops-guard — the CFO is pacing';
-            } else if (output.includes('BUDGET EXCEEDED')) {
+            let name = '✅ finops-guard — the CFO sleeps soundly';
+            if (output.includes('BUDGET EXCEEDED')) {
               conclusion = 'failure';
-              status_text = '❌ finops-guard — the CFO has fainted';
+              name = '❌ finops-guard — the CFO has fainted';
+            } else if (output.includes('BUDGET ALERT') || output.includes('APPROACHING LIMIT')) {
+              conclusion = 'neutral';
+              name = '⚠️ finops-guard — the CFO is pacing';
             }
 
-            github.rest.checks.create({
+            const sha = context.payload.pull_request
+              ? context.payload.pull_request.head.sha
+              : context.sha;
+
+            await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: status_text,
-              head_sha: context.sha,
+              name: name,
+              head_sha: sha,
               status: 'completed',
               conclusion: conclusion,
-              output: {
-                title: 'Cost Analysis',
-                summary: output.split('\n').slice(0, 10).join('\n')
-              }
+              output: { title: 'Cost Analysis', summary: output }
             });
 
-      - name: Upload SVG
+      - name: Upload SVG artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: burn-meter
-          path: burn.svg
+          path: assets/burn.svg
