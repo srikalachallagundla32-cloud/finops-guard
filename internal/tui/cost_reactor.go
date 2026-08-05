@@ -301,6 +301,11 @@ func (m *CostReactor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fire.SetIntensity(intensity)
 			m.fire.Step()
 
+			// Trigger shake on high-cost finding
+			if intensity > 0.75 && m.shakeFrame == 0 {
+				m.shakeFrame = 6
+			}
+
 			// Spawn particles
 			spawnRate := int(math.Max(1, m.totalRisk/10))
 			for i := 0; i < spawnRate && len(m.particles) < 60; i++ {
@@ -360,6 +365,14 @@ func (m *CostReactor) View() string {
 	}
 
 	status := statusFromRisk(m.totalRisk, m.threshold)
+
+	// Apply screen shake if active
+	var shakeOffset string
+	if m.shakeFrame > 0 {
+		if m.rng.Intn(2) == 0 {
+			shakeOffset = " " // Right shift 1 char
+		}
+	}
 
 	// Particle overlay
 	overlay := make(map[[2]int]rune, len(m.particles))
@@ -436,28 +449,55 @@ func (m *CostReactor) View() string {
 	frameStr := fmt.Sprintf("FRAME: %04d │ [↑/↓] navigate [↵] inspect [q] quit", m.frameCount)
 	doc.WriteString(burnPill + "  " + lipgloss.NewStyle().Foreground(colorLavender).Render(frameStr))
 
-	return doc.String()
+	output := doc.String()
+
+	// Apply screen shake if active
+	if m.shakeFrame > 0 && shakeOffset != "" {
+		lines := strings.Split(output, "\n")
+		for i := range lines {
+			lines[i] = shakeOffset + lines[i]
+		}
+		output = strings.Join(lines, "\n")
+	}
+
+	return output
 }
 
 func (m *CostReactor) renderBootSequence() string {
 	progress := float64(48-m.bootCountdown) / 48
-	scanline := int(float64(m.height-8) * progress)
+	scanline := int(float64(6) * progress)
 
 	var doc strings.Builder
-	doc.WriteString("\n")
+	doc.WriteString("\n\n")
 	doc.WriteString(lipgloss.NewStyle().Foreground(colorPink).Bold(true).Render("  ███████████████████████████\n"))
 	doc.WriteString(lipgloss.NewStyle().Foreground(colorMagenta).Render("  🛡️  F I N O P S - G U A R D\n"))
 	doc.WriteString(lipgloss.NewStyle().Foreground(colorPink).Bold(true).Render("  ███████████████████████████\n\n"))
 
-	doc.WriteString("  INITIALIZING COST REACTOR...\n\n")
+	doc.WriteString(lipgloss.NewStyle().Foreground(colorCoral).Render("  INITIALIZING COST REACTOR...\n\n"))
 
-	for i := 0; i < 6; i++ {
+	systems := []string{
+		"🔌 PRICING ENGINE",
+		"📊 ANALYZER CORE",
+		"🔥 FIRE SIMULATION",
+		"💧 PARTICLE SYSTEM",
+		"📡 CFO INTERFACE",
+		"⚡ STATUS MONITOR",
+	}
+
+	for i := 0; i < len(systems); i++ {
 		if i < scanline {
-			doc.WriteString(lipgloss.NewStyle().Foreground(colorMint).Render("  ✓ SYSTEMS ONLINE\n"))
+			doc.WriteString(lipgloss.NewStyle().Foreground(colorMint).Render("  ✓ "))
+			doc.WriteString(lipgloss.NewStyle().Foreground(colorButter).Bold(true).Render(systems[i] + "\n"))
 		} else {
-			doc.WriteString("  • SYSTEMS ONLINE\n")
+			doc.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render("  ◦ " + systems[i] + "\n"))
 		}
 	}
+
+	doc.WriteString("\n  ")
+	barWidth := int(float64(30) * progress)
+	doc.WriteString(lipgloss.NewStyle().Foreground(colorMint).Render(strings.Repeat("█", barWidth)))
+	doc.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render(strings.Repeat("░", 30-barWidth)))
+	doc.WriteString("\n")
 
 	return doc.String()
 }
