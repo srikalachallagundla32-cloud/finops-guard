@@ -82,15 +82,28 @@ jobs:
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
 
-            // Upsert: reuse our existing comment instead of stacking new ones.
+            // Collect every past finops comment (marker or legacy signatures),
+            // update one in place, and delete the rest so the thread stays to a
+            // single clean comment.
+            const sigs = [marker, 'finops-guard — cost check', 'SAFE TO MERGE', 'WANTED:'];
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number, per_page: 100
             });
-            const mine = comments.find(c => c.body && c.body.includes(marker));
-            if (mine) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            const ours = comments.filter(c =>
+              c.user && c.user.type === 'Bot' && c.body && sigs.some(s => c.body.includes(s)));
+
+            let keep = ours.find(c => c.body.includes(marker)) || ours[0];
+            if (keep) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: keep.id, body });
             } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              const created = await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              keep = created.data;
+            }
+            for (const c of ours) {
+              if (c.id !== keep.id) {
+                try { await github.rest.issues.deleteComment({ owner, repo, comment_id: c.id }); }
+                catch (e) { core.warning(`Could not delete stale comment ${c.id}: ${e.message}`); }
+              }
             }
 
       - name: Post fix suggestions
