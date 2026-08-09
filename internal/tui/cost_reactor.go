@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/your-username/finops-guard/pkg/analyzer"
+	"github.com/srikalachallagundla32-cloud/finops-guard/pkg/analyzer"
 )
 
 // --- Color & Palette ---

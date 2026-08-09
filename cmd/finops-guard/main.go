@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/your-username/finops-guard/internal/tui"
-	"github.com/your-username/finops-guard/pkg/analyzer"
-	"github.com/your-username/finops-guard/pkg/config"
-	"github.com/your-username/finops-guard/pkg/costengine"
-	"github.com/your-username/finops-guard/pkg/ui"
+	"github.com/srikalachallagundla32-cloud/finops-guard/internal/tui"
+	"github.com/srikalachallagundla32-cloud/finops-guard/pkg/analyzer"
+	"github.com/srikalachallagundla32-cloud/finops-guard/pkg/config"
+	"github.com/srikalachallagundla32-cloud/finops-guard/pkg/costengine"
+	"github.com/srikalachallagundla32-cloud/finops-guard/pkg/ui"
 )
 
 const guardConfigPath = ".finops-guard.yml"

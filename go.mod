@@ -1,4 +1,4 @@
-module github.com/your-username/finops-guard
+module github.com/srikalachallagundla32-cloud/finops-guard
 
 go 1.26.5
 

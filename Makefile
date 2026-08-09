@@ -4,7 +4,11 @@ CMD_DIR     := ./cmd/finops-guard
 PRICING_FILE := pricing.json
 SAMPLE_FILE := test/testdata/ai_slop_sample.py
 
-.PHONY: build run demo ledger test cover vet fmt clean
+.PHONY: build run demo demo-gif ledger test cover vet fmt clean
+
+# Record the terminal demo GIF from demo.tape (requires: brew install vhs).
+demo-gif: build
+	vhs demo.tape
 
 ledger: build
 	./scripts/finops-ledger.sh record $(SAMPLE_FILE)

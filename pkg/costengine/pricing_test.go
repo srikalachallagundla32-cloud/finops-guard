@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/your-username/finops-guard/pkg/costengine"
+	"github.com/srikalachallagundla32-cloud/finops-guard/pkg/costengine"
 )
 
 const floatTolerance = 0.0001

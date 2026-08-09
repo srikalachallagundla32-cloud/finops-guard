@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/your-username/finops-guard/pkg/analyzer"
+	"github.com/srikalachallagundla32-cloud/finops-guard/pkg/analyzer"
 )
 
 func TestScanFile_LoopDetection(t *testing.T) {
