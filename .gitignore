@@ -20,3 +20,4 @@ coverage.txt
 # Local configuration overrides
 .env
 local-pricing.json
+dist/

@@ -17,7 +17,12 @@ import (
 
 const guardConfigPath = ".finops-guard.yml"
 
+// version is injected at build time via -ldflags "-X main.version=...".
+// GoReleaser sets it from the git tag; unreleased builds report "dev".
+var version = "dev"
+
 func main() {
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	pricingPath := flag.String("pricing", "pricing.json", "Path to the pricing catalog JSON file")
 	scanPath := flag.String("scan", "", "Path to a Python/TypeScript file to scan for loop-bound API calls")
 	themeName := flag.String("theme", "tactical", "UI theme for legacy --no-tui mode: "+strings.Join(ui.ThemeNames(), ", "))
@@ -30,6 +35,11 @@ func main() {
 	repoURL := flag.String("repo-url", "", "Repository URL (e.g. https://github.com/owner/repo) for clickable links in the PR comment")
 	commitSHA := flag.String("commit-sha", "", "Commit SHA used to build the 'View flagged line' link")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("finops-guard %s\n", version)
+		return
+	}
 
 	// In --note mode, stdout must be a single clean ledger line: route all
 	// human banners to stderr.

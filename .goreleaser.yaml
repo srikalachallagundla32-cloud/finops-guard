@@ -1,0 +1,68 @@
+# GoReleaser config — cross-compiles binaries and publishes a Homebrew cask.
+# Docs: https://goreleaser.com   Validate: goreleaser check
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: finops-guard
+    main: ./cmd/finops-guard
+    binary: finops-guard
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Inject the tag version into `finops-guard --version`.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: "checksums.txt"
+
+# Homebrew cask published to srikalachallagundla32-cloud/homebrew-tap.
+# Installs with: brew install srikalachallagundla32-cloud/tap/finops-guard
+homebrew_casks:
+  - name: finops-guard
+    repository:
+      owner: srikalachallagundla32-cloud
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/srikalachallagundla32-cloud/finops-guard"
+    description: "FinOps guardrails for codebases: static loop-cost detection, an animated TUI, and GitHub PR cost cards."
+    # The binary is unsigned; strip the macOS quarantine flag so it runs after install.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/finops-guard"]
+          end
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  prerelease: auto
