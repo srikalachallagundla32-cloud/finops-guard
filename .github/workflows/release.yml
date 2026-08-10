@@ -22,12 +22,26 @@ jobs:
         with:
           go-version: '1.22'
 
+      # Publish the Homebrew cask only when the tap token is configured.
+      # Without it, the release still succeeds (binaries only) instead of failing.
+      - name: Decide GoReleaser args
+        id: gr
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_GITHUB_TOKEN not set — skipping Homebrew cask publish."
+            echo "args=release --clean --skip=homebrew" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=release --clean" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --clean
+          args: ${{ steps.gr.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
