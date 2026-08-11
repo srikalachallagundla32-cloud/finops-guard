@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"strings"
 	"time"
 
@@ -244,6 +245,36 @@ type CostReactor struct {
 	selectedQuote string
 	lastQuoteTime int
 	rng           *rand.Rand
+	showDiff      bool // 'd' toggles the side-by-side refactor view
+	breachAlerted bool // ensures the budget-breach bell only rings once
+}
+
+// bell emits a terminal audio bell (BEL) via stderr, which does not disturb
+// the Bubble Tea alt-screen render on stdout.
+func (m *CostReactor) bell() { fmt.Fprint(os.Stderr, "\a") }
+
+// bellIfCritical rings the bell when the cursor lands on a CRITICAL finding.
+func (m *CostReactor) bellIfCritical() {
+	if m.cursor >= 0 && m.cursor < len(m.issues) && m.issues[m.cursor].Severity == "CRITICAL" {
+		m.bell()
+	}
+}
+
+// batchedSuggestion returns an illustrative batched refactor for a provider —
+// a recommended pattern, not a transform of the user's exact code.
+func batchedSuggestion(targetAPI string) string {
+	switch targetAPI {
+	case "openai", "anthropic", "bedrock", "vertex":
+		return "# collect inputs first\nprompts = [build(x) for x in items]\n\n# one batched / async call\nresults = batch_generate(prompts)"
+	case "pinecone":
+		return "# build one payload\nvectors = [to_vec(x) for x in items]\n\n# single batched upsert\nindex.upsert(vectors=vectors)"
+	case "athena":
+		return "# combine into one query\nq = build_union(ids)\nathena.start_query_execution(q)"
+	case "dynamodb":
+		return "# batch writes (25/req)\nwith table.batch_writer() as b:\n    for x in items:\n        b.put_item(x)"
+	default:
+		return "# hoist the call out of the loop\n# batch or cache the repeated work"
+	}
 }
 
 func NewCostReactor(issues []analyzer.Issue, totalRisk, threshold float64) *CostReactor {
@@ -294,6 +325,11 @@ func (m *CostReactor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.bootCountdown > 0 {
 			m.bootCountdown--
 		} else {
+			// Ring once when the reactor boots into a budget breach.
+			if !m.breachAlerted && m.threshold > 0 && m.totalRisk >= m.threshold {
+				m.bell()
+				m.breachAlerted = true
+			}
 			intensity := m.totalRisk / m.threshold
 			if intensity > 1.0 {
 				intensity = 1.0
@@ -346,13 +382,17 @@ func (m *CostReactor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
+		case "d":
+			m.showDiff = !m.showDiff
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				m.bellIfCritical()
 			}
 		case "down", "j":
 			if m.cursor < len(m.issues)-1 {
 				m.cursor++
+				m.bellIfCritical()
 			}
 		}
 	}
@@ -391,23 +431,27 @@ func (m *CostReactor) View() string {
 	doc.WriteString(headerBar + "\n")
 	doc.WriteString(lipgloss.NewStyle().Foreground(colorMagenta).Render(strings.Repeat("─", m.width)) + "\n\n")
 
-	// Code inspector (detailed)
+	// Code inspector — either the detail panel or the side-by-side diff.
 	if len(m.issues) > 0 {
 		selected := m.issues[m.cursor]
-		inspectorTitle := lipgloss.NewStyle().Foreground(colorCoral).Bold(true).Render("📍 CURRENT LEAK")
-		doc.WriteString(inspectorTitle + "\n")
-		fileLine := lipgloss.NewStyle().Foreground(colorLavender).Render(fmt.Sprintf("  Location: %s:%d", selected.FilePath, selected.LineNumber))
-		doc.WriteString(fileLine + "\n")
-		costLine := lipgloss.NewStyle().Foreground(colorButter).Render(fmt.Sprintf("  Cost/run:  $%.4f [%s]", selected.EstCostRisk, selected.ID))
-		doc.WriteString(costLine + "\n")
-		severityColor := colorRed
-		if selected.Severity == "LOW" {
-			severityColor = colorMint
-		} else if selected.Severity == "MEDIUM" {
-			severityColor = colorButter
+		if m.showDiff {
+			doc.WriteString(m.renderDiff(selected) + "\n\n")
+		} else {
+			inspectorTitle := lipgloss.NewStyle().Foreground(colorCoral).Bold(true).Render("📍 CURRENT LEAK")
+			doc.WriteString(inspectorTitle + "\n")
+			fileLine := lipgloss.NewStyle().Foreground(colorLavender).Render(fmt.Sprintf("  Location: %s:%d", selected.FilePath, selected.LineNumber))
+			doc.WriteString(fileLine + "\n")
+			costLine := lipgloss.NewStyle().Foreground(colorButter).Render(fmt.Sprintf("  Cost/run:  $%.4f [%s]", selected.EstCostRisk, selected.ID))
+			doc.WriteString(costLine + "\n")
+			severityColor := colorRed
+			if selected.Severity == "LOW" {
+				severityColor = colorMint
+			} else if selected.Severity == "MEDIUM" {
+				severityColor = colorButter
+			}
+			severityLine := lipgloss.NewStyle().Foreground(severityColor).Render(fmt.Sprintf("  Severity:  %s", selected.Severity))
+			doc.WriteString(severityLine + "\n\n")
 		}
-		severityLine := lipgloss.NewStyle().Foreground(severityColor).Render(fmt.Sprintf("  Severity:  %s", selected.Severity))
-		doc.WriteString(severityLine + "\n\n")
 	}
 
 	// Findings list
@@ -446,7 +490,11 @@ func (m *CostReactor) View() string {
 	// Status bar
 	doc.WriteString("\n")
 	burnPill := lipgloss.NewStyle().Bold(true).Foreground(colorBg).Background(status.Color()).Padding(0, 1).Render(fmt.Sprintf("BURN: $%.2f / $%.2f", m.totalRisk, m.threshold))
-	frameStr := fmt.Sprintf("FRAME: %04d │ [↑/↓] navigate [↵] inspect [q] quit", m.frameCount)
+	diffHint := "[d] toggle diff"
+	if m.showDiff {
+		diffHint = "[d] hide diff"
+	}
+	frameStr := fmt.Sprintf("FRAME: %04d │ [↑/↓] navigate  %s  [q] quit", m.frameCount, diffHint)
 	doc.WriteString(burnPill + "  " + lipgloss.NewStyle().Foreground(colorLavender).Render(frameStr))
 
 	output := doc.String()
@@ -500,6 +548,26 @@ func (m *CostReactor) renderBootSequence() string {
 	doc.WriteString("\n")
 
 	return doc.String()
+}
+
+// renderDiff shows the flagged code (left) beside a recommended batched
+// refactor (right), toggled with 'd'.
+func (m *CostReactor) renderDiff(issue analyzer.Issue) string {
+	boxW := m.width/2 - 3
+	if boxW < 24 {
+		boxW = 24
+	}
+	left := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(colorRed).
+		Width(boxW).
+		Render(fmt.Sprintf("❌ CURRENT (COST LEAK)\n%s:%d\n\n%s", issue.FilePath, issue.LineNumber, issue.CodeSnippet))
+	right := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(colorMint).
+		Width(boxW).
+		Render(fmt.Sprintf("✅ RECOMMENDED (BATCHED)\n%s\n\n%s", issue.TargetAPI, batchedSuggestion(issue.TargetAPI)))
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
 // Run starts the Cost Reactor TUI.
