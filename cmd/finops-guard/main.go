@@ -54,10 +54,14 @@ func main() {
 		banner = os.Stderr
 	}
 
-	_, ok := ui.ByName(*themeName)
-	if !ok {
-		fmt.Printf("❌ [Error] Unknown theme %q. Valid options: %s\n", *themeName, strings.Join(ui.ThemeNames(), ", "))
-		os.Exit(1)
+	// "matrix" is a live-TUI animation mode, not a legacy color theme, so it
+	// bypasses the ui theme registry validation.
+	if *themeName != "matrix" {
+		_, ok := ui.ByName(*themeName)
+		if !ok {
+			fmt.Printf("❌ [Error] Unknown theme %q. Valid options: %s (or matrix)\n", *themeName, strings.Join(ui.ThemeNames(), ", "))
+			os.Exit(1)
+		}
 	}
 
 	fmt.Fprintln(banner, "🛡️  FinOps-Guard CLI v0.1.0 — Static Cost Analysis Engine")
@@ -194,7 +198,7 @@ func main() {
 	}
 
 	// Animated Cost Reactor TUI (default)
-	if err := tui.Run(issues, totalRisk, costFailThreshold); err != nil {
+	if err := tui.Run(issues, totalRisk, costFailThreshold, *themeName); err != nil {
 		fmt.Printf("❌ [Error] Running Cost Reactor: %v\n", err)
 		os.Exit(1)
 	}

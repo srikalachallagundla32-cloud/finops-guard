@@ -247,6 +247,103 @@ type CostReactor struct {
 	rng           *rand.Rand
 	showDiff      bool // 'd' toggles the side-by-side refactor view
 	breachAlerted bool // ensures the budget-breach bell only rings once
+	theme         string
+	matrixHeads   []float64 // per-column head position for --theme=matrix
+	matrixSpeed   []float64 // per-column fall speed
+}
+
+var matrixGlyphs = []rune{'0', '1', 'λ', '$', '∑', '7', 'ζ'}
+
+// initMatrix (re)initialises the matrix-rain columns for the given width.
+func (m *CostReactor) initMatrix(width int) {
+	m.matrixHeads = make([]float64, width)
+	m.matrixSpeed = make([]float64, width)
+	for i := 0; i < width; i++ {
+		m.matrixHeads[i] = -float64(m.rng.Intn(20))
+		m.matrixSpeed[i] = 0.3 + 0.7*m.rng.Float64()
+	}
+}
+
+// stepMatrix advances each column; rain accelerates on a budget breach.
+func (m *CostReactor) stepMatrix() {
+	rows := float64(m.fireRows * 2)
+	factor := 1.0
+	if m.threshold > 0 && m.totalRisk >= m.threshold {
+		factor = 1.8
+	}
+	for i := range m.matrixHeads {
+		m.matrixHeads[i] += m.matrixSpeed[i] * factor
+		if m.matrixHeads[i] > rows+8 {
+			m.matrixHeads[i] = -float64(m.rng.Intn(12))
+			m.matrixSpeed[i] = 0.3 + 0.7*m.rng.Float64()
+		}
+	}
+}
+
+// renderMatrix draws the falling-glyph canvas (green, turning red on breach).
+func (m *CostReactor) renderMatrix() string {
+	rows := m.fireRows * 2
+	base := colorMint
+	if m.threshold > 0 && m.totalRisk >= m.threshold {
+		base = colorRed
+	}
+	var sb strings.Builder
+	for y := 0; y < rows; y++ {
+		for x := 0; x < m.width && x < len(m.matrixHeads); x++ {
+			d := m.matrixHeads[x] - float64(y)
+			if d < 0 || d > 8 {
+				sb.WriteByte(' ')
+				continue
+			}
+			g := string(matrixGlyphs[(x*7+y*3+m.frameCount/2+int(m.matrixHeads[x]))%len(matrixGlyphs)])
+			var st lipgloss.Style
+			switch {
+			case d < 1:
+				st = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(true)
+			case d < 3:
+				st = lipgloss.NewStyle().Foreground(base).Bold(true)
+			default:
+				st = lipgloss.NewStyle().Foreground(base)
+			}
+			sb.WriteString(st.Render(g))
+		}
+		sb.WriteByte('\n')
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// velocityMeter renders the animated ASCII burn-velocity bar for the status row.
+func (m *CostReactor) velocityMeter(status Status) string {
+	ratio := 0.0
+	if m.threshold > 0 {
+		ratio = m.totalRisk / m.threshold
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	const n = 10
+	filled := int(ratio*float64(n) + 0.5)
+	spark := (m.frameCount / 3) % n // moving highlight → continuous animation
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		switch {
+		case i < filled && i == spark:
+			b.WriteString(lipgloss.NewStyle().Foreground(colorButter).Bold(true).Render("▰"))
+		case i < filled:
+			b.WriteString(lipgloss.NewStyle().Foreground(status.Color()).Render("▰"))
+		default:
+			b.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render("▱"))
+		}
+	}
+	return fmt.Sprintf("🔥 %s %d%%", b.String(), int(ratio*100))
+}
+
+// pulseColor flickers between two reds each few frames for CRITICAL emphasis.
+func (m *CostReactor) pulseColor() lipgloss.Color {
+	if (m.frameCount/4)%2 == 0 {
+		return colorRed
+	}
+	return lipgloss.Color("#ff8a8a")
 }
 
 // bell emits a terminal audio bell (BEL) via stderr, which does not disturb
@@ -277,7 +374,7 @@ func batchedSuggestion(targetAPI string) string {
 	}
 }
 
-func NewCostReactor(issues []analyzer.Issue, totalRisk, threshold float64) *CostReactor {
+func NewCostReactor(issues []analyzer.Issue, totalRisk, threshold float64, theme string) *CostReactor {
 	rand.Seed(time.Now().UnixNano())
 	width, fireRows := 120, 10
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -286,7 +383,7 @@ func NewCostReactor(issues []analyzer.Issue, totalRisk, threshold float64) *Cost
 	if pool, ok := quotes[status]; ok && len(pool) > 0 {
 		quote = pool[rng.Intn(len(pool))]
 	}
-	return &CostReactor{
+	m := &CostReactor{
 		issues:        issues,
 		cursor:        0,
 		totalRisk:     totalRisk,
@@ -298,7 +395,10 @@ func NewCostReactor(issues []analyzer.Issue, totalRisk, threshold float64) *Cost
 		bootCountdown: 48, // ~2s at 24fps
 		selectedQuote: quote,
 		rng:           rng,
+		theme:         theme,
 	}
+	m.initMatrix(width)
+	return m
 }
 
 func (m *CostReactor) Init() tea.Cmd {
@@ -312,6 +412,7 @@ func (m *CostReactor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.width = msg.Width
 			m.height = msg.Height
 			m.fire = newFire(m.width, m.fireRows*2)
+			m.initMatrix(m.width)
 		}
 
 	case TickMsg:
@@ -336,6 +437,9 @@ func (m *CostReactor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.fire.SetIntensity(intensity)
 			m.fire.Step()
+			if m.theme == "matrix" {
+				m.stepMatrix()
+			}
 
 			// Trigger shake on high-cost finding
 			if intensity > 0.75 && m.shakeFrame == 0 {
@@ -437,20 +541,23 @@ func (m *CostReactor) View() string {
 		if m.showDiff {
 			doc.WriteString(m.renderDiff(selected) + "\n\n")
 		} else {
-			inspectorTitle := lipgloss.NewStyle().Foreground(colorCoral).Bold(true).Render("📍 CURRENT LEAK")
-			doc.WriteString(inspectorTitle + "\n")
-			fileLine := lipgloss.NewStyle().Foreground(colorLavender).Render(fmt.Sprintf("  Location: %s:%d", selected.FilePath, selected.LineNumber))
-			doc.WriteString(fileLine + "\n")
-			costLine := lipgloss.NewStyle().Foreground(colorButter).Render(fmt.Sprintf("  Cost/run:  $%.4f [%s]", selected.EstCostRisk, selected.ID))
-			doc.WriteString(costLine + "\n")
 			severityColor := colorRed
 			if selected.Severity == "LOW" {
 				severityColor = colorMint
 			} else if selected.Severity == "MEDIUM" {
 				severityColor = colorButter
 			}
-			severityLine := lipgloss.NewStyle().Foreground(severityColor).Render(fmt.Sprintf("  Severity:  %s", selected.Severity))
-			doc.WriteString(severityLine + "\n\n")
+			var d strings.Builder
+			d.WriteString(lipgloss.NewStyle().Foreground(colorCoral).Bold(true).Render("📍 CURRENT LEAK") + "\n")
+			d.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render(fmt.Sprintf("Location: %s:%d", selected.FilePath, selected.LineNumber)) + "\n")
+			d.WriteString(lipgloss.NewStyle().Foreground(colorButter).Render(fmt.Sprintf("Cost/run:  $%.4f [%s]", selected.EstCostRisk, selected.ID)) + "\n")
+			d.WriteString(lipgloss.NewStyle().Foreground(severityColor).Render(fmt.Sprintf("Severity:  %s", selected.Severity)))
+			detail := d.String()
+			// High-frequency border pulse when the selected finding is CRITICAL.
+			if selected.Severity == "CRITICAL" {
+				detail = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(m.pulseColor()).Padding(0, 1).Render(detail)
+			}
+			doc.WriteString(detail + "\n\n")
 		}
 	}
 
@@ -477,8 +584,12 @@ func (m *CostReactor) View() string {
 		doc.WriteString("\n")
 	}
 
-	// Fire canvas
-	doc.WriteString(m.fire.RenderHalfBlocks(overlay))
+	// Canvas: matrix rain (--theme=matrix) or the Doom-fire burn gauge.
+	if m.theme == "matrix" {
+		doc.WriteString(m.renderMatrix())
+	} else {
+		doc.WriteString(m.fire.RenderHalfBlocks(overlay))
+	}
 	doc.WriteString("\n\n")
 
 	// CFO quote bar with background
@@ -494,8 +605,8 @@ func (m *CostReactor) View() string {
 	if m.showDiff {
 		diffHint = "[d] hide diff"
 	}
-	frameStr := fmt.Sprintf("FRAME: %04d │ [↑/↓] navigate  %s  [q] quit", m.frameCount, diffHint)
-	doc.WriteString(burnPill + "  " + lipgloss.NewStyle().Foreground(colorLavender).Render(frameStr))
+	frameStr := fmt.Sprintf("│ [↑/↓] navigate  %s  [q] quit", diffHint)
+	doc.WriteString(burnPill + "  " + m.velocityMeter(status) + "  " + lipgloss.NewStyle().Foreground(colorLavender).Render(frameStr))
 
 	output := doc.String()
 
@@ -557,9 +668,13 @@ func (m *CostReactor) renderDiff(issue analyzer.Issue) string {
 	if boxW < 24 {
 		boxW = 24
 	}
+	leftBorder := colorRed
+	if issue.Severity == "CRITICAL" {
+		leftBorder = m.pulseColor()
+	}
 	left := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(colorRed).
+		BorderForeground(leftBorder).
 		Width(boxW).
 		Render(fmt.Sprintf("❌ CURRENT (COST LEAK)\n%s:%d\n\n%s", issue.FilePath, issue.LineNumber, issue.CodeSnippet))
 	right := lipgloss.NewStyle().
@@ -570,9 +685,10 @@ func (m *CostReactor) renderDiff(issue analyzer.Issue) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
-// Run starts the Cost Reactor TUI.
-func Run(issues []analyzer.Issue, totalRisk, threshold float64) error {
-	p := tea.NewProgram(NewCostReactor(issues, totalRisk, threshold), tea.WithAltScreen())
+// Run starts the Cost Reactor TUI. theme selects the canvas mode ("matrix"
+// enables the falling-glyph rain; anything else uses the Doom-fire canvas).
+func Run(issues []analyzer.Issue, totalRisk, threshold float64, theme string) error {
+	p := tea.NewProgram(NewCostReactor(issues, totalRisk, threshold, theme), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
