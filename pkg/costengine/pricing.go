@@ -111,6 +111,8 @@ const (
 	CostBedrockClaudeSonnet = 0.015  // AWS Bedrock Claude 3.5 Sonnet estimate
 	CostVertexGeminiPro     = 0.0025 // GCP Vertex AI Gemini Pro estimate
 	CostPineconeQuery       = 0.001  // Pinecone vector query estimate
+	CostRetokenization      = 0.015  // Re-sending full growing chat history (FG-010)
+	CostConcurrencyBlast    = 0.02   // Unthrottled Promise.all fan-out in a loop (FG-011)
 )
 
 // EstimateCallCost estimates the cost of a single call to targetAPI
@@ -133,6 +135,10 @@ func (c *PricingCatalog) EstimateCallCost(targetAPI string) float64 {
 		return RoundCurrency(CostVertexGeminiPro)
 	case "pinecone":
 		return RoundCurrency(CostPineconeQuery)
+	case "retokenization":
+		return RoundCurrency(CostRetokenization)
+	case "concurrency":
+		return RoundCurrency(CostConcurrencyBlast)
 	default:
 		return 0
 	}

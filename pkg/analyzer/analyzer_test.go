@@ -250,3 +250,84 @@ def one_shot(item):
 		})
 	}
 }
+
+// TestScanFile_AISlopRules covers the RE2-compliant AI-slop rules FG-010
+// (history re-tokenization), FG-011 (Promise.all fan-out), and FG-012
+// (hardcoded secret in a loop) across Python and TypeScript.
+func TestScanFile_AISlopRules(t *testing.T) {
+	tests := []struct {
+		name         string
+		file         string
+		code         string
+		wantRuleID   string
+		wantIssueCnt int
+	}{
+		{
+			name: "FG-010 history re-tokenization (Python)",
+			file: "chat.py",
+			code: `
+for turn in conversation:
+    messages.append(turn)
+    resp = client.chat.completions.create(messages=messages)
+`,
+			wantRuleID:   "FG-010",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "FG-010 history re-tokenization (TypeScript)",
+			file: "chat.ts",
+			code: `
+for (const turn of conversation) {
+  messages.push(turn);
+  const r = await client.chat.completions.create({ messages: messages });
+}
+`,
+			wantRuleID:   "FG-010",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "FG-011 Promise.all fan-out inside loop (TypeScript)",
+			file: "blast.ts",
+			code: `
+for (const batch of batches) {
+  await Promise.all(batch.map((p) => callModel(p)));
+}
+`,
+			wantRuleID:   "FG-011",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "FG-012 hardcoded OpenAI key in loop (Python)",
+			file: "leak.py",
+			code: `
+for user in users:
+    client = OpenAI(api_key="sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX1234")
+`,
+			wantRuleID:   "FG-012",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "FG-012 hardcoded AWS key in loop (TypeScript)",
+			file: "leak.ts",
+			code: `
+for (const region of regions) {
+  const cfg = { accessKeyId: "AKIAIOSFODNN7EXAMPLE" };
+}
+`,
+			wantRuleID:   "FG-012",
+			wantIssueCnt: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issues := analyzer.ScanCodeSnippet(tt.code, tt.file)
+			if len(issues) != tt.wantIssueCnt {
+				t.Fatalf("ScanCodeSnippet() found %d issues; want %d (%+v)", len(issues), tt.wantIssueCnt, issues)
+			}
+			if tt.wantIssueCnt > 0 && issues[0].ID != tt.wantRuleID {
+				t.Errorf("ScanCodeSnippet() rule ID = %s; want %s", issues[0].ID, tt.wantRuleID)
+			}
+		})
+	}
+}

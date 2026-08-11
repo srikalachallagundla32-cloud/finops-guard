@@ -86,6 +86,35 @@ func GetDefaultRules() []DetectionRule {
 			// Pinecone / vector index query & upsert (Python and JS/TS).
 			Pattern: regexp.MustCompile(`\b(index|pinecone\w*)\.(query|upsert)\s*\(`),
 		},
+		{
+			ID:        "FG-010",
+			Name:      "Full History Re-tokenization in Loop",
+			Severity:  "HIGH",
+			TargetAPI: "retokenization",
+			// Re-sending the whole growing history: .create(... messages=messages ...)
+			// (Python kwarg) or .create({ messages: messages }) (JS/TS). Single-line
+			// on purpose — the engine matches per line inside an already-detected
+			// loop scope, so the proposed multi-line (?s)(for|while).* patterns
+			// (and the backref/lookahead FG-008/FG-009) don't fit and are deferred.
+			Pattern: regexp.MustCompile(`\.create\(.*\bmessages\s*[:=]\s*messages\b`),
+		},
+		{
+			ID:        "FG-011",
+			Name:      "Unthrottled Parallel Async Blast",
+			Severity:  "HIGH",
+			TargetAPI: "concurrency",
+			// A Promise.all fan-out sitting inside a loop scope (or a .map/.forEach
+			// callback) — simultaneous requests risk rate-limit bursts.
+			Pattern: regexp.MustCompile(`Promise\.all\s*\(`),
+		},
+		{
+			ID:        "FG-012",
+			Name:      "Hardcoded Secret in Loop",
+			Severity:  "CRITICAL",
+			TargetAPI: "secret",
+			// OpenAI project key or AWS access key id literal inside a loop scope.
+			Pattern: regexp.MustCompile(`(sk-proj-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})`),
+		},
 	}
 }
 
