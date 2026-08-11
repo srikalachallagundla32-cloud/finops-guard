@@ -23,6 +23,7 @@ var version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	audit := flag.Bool("audit", false, "Print the git-notes spend ledger (refs/notes/finops) and exit")
 	pricingPath := flag.String("pricing", "pricing.json", "Path to the pricing catalog JSON file")
 	scanPath := flag.String("scan", "", "Path to a Python/TypeScript file to scan for loop-bound API calls")
 	themeName := flag.String("theme", "tactical", "UI theme for legacy --no-tui mode: "+strings.Join(ui.ThemeNames(), ", "))
@@ -38,6 +39,11 @@ func main() {
 
 	if *showVersion {
 		fmt.Printf("finops-guard %s\n", version)
+		return
+	}
+
+	if *audit {
+		printGitLedger()
 		return
 	}
 
