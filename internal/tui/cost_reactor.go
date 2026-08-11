@@ -280,12 +280,31 @@ func (m *CostReactor) stepMatrix() {
 	}
 }
 
-// renderMatrix draws the falling-glyph canvas (green, turning red on breach).
+// Cosmic Obsidian palette for --theme=cosmos.
+var (
+	cosmosPurple = lipgloss.Color("#c084fc") // nebula core
+	cosmosCyan   = lipgloss.Color("#38bdf8") // cosmic ray head
+	cosmosPink   = lipgloss.Color("#e879f9") // supernova breach
+)
+
+// matrixMode reports whether the falling-glyph canvas is active.
+func (m *CostReactor) matrixMode() bool { return m.theme == "matrix" || m.theme == "cosmos" }
+
+// renderMatrix draws the falling-glyph canvas. matrix = green→red; cosmos =
+// nebula-purple with cyan heads, turning supernova-pink on breach.
 func (m *CostReactor) renderMatrix() string {
 	rows := m.fireRows * 2
-	base := colorMint
-	if m.threshold > 0 && m.totalRisk >= m.threshold {
-		base = colorRed
+	breach := m.threshold > 0 && m.totalRisk >= m.threshold
+	base, head := colorMint, lipgloss.Color("#ffffff")
+	if m.theme == "cosmos" {
+		base, head = cosmosPurple, cosmosCyan
+	}
+	if breach {
+		if m.theme == "cosmos" {
+			base = cosmosPink
+		} else {
+			base = colorRed
+		}
 	}
 	var sb strings.Builder
 	for y := 0; y < rows; y++ {
@@ -299,7 +318,7 @@ func (m *CostReactor) renderMatrix() string {
 			var st lipgloss.Style
 			switch {
 			case d < 1:
-				st = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(true)
+				st = lipgloss.NewStyle().Foreground(head).Bold(true)
 			case d < 3:
 				st = lipgloss.NewStyle().Foreground(base).Bold(true)
 			default:
@@ -437,7 +456,7 @@ func (m *CostReactor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.fire.SetIntensity(intensity)
 			m.fire.Step()
-			if m.theme == "matrix" {
+			if m.matrixMode() {
 				m.stepMatrix()
 			}
 
@@ -585,7 +604,7 @@ func (m *CostReactor) View() string {
 	}
 
 	// Canvas: matrix rain (--theme=matrix) or the Doom-fire burn gauge.
-	if m.theme == "matrix" {
+	if m.matrixMode() {
 		doc.WriteString(m.renderMatrix())
 	} else {
 		doc.WriteString(m.fire.RenderHalfBlocks(overlay))

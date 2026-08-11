@@ -54,12 +54,12 @@ func main() {
 		banner = os.Stderr
 	}
 
-	// "matrix" is a live-TUI animation mode, not a legacy color theme, so it
-	// bypasses the ui theme registry validation.
-	if *themeName != "matrix" {
+	// "matrix" and "cosmos" are live-TUI animation modes, not legacy color
+	// themes, so they bypass the ui theme registry validation.
+	if *themeName != "matrix" && *themeName != "cosmos" {
 		_, ok := ui.ByName(*themeName)
 		if !ok {
-			fmt.Printf("❌ [Error] Unknown theme %q. Valid options: %s (or matrix)\n", *themeName, strings.Join(ui.ThemeNames(), ", "))
+			fmt.Printf("❌ [Error] Unknown theme %q. Valid options: %s (or matrix, cosmos)\n", *themeName, strings.Join(ui.ThemeNames(), ", "))
 			os.Exit(1)
 		}
 	}
