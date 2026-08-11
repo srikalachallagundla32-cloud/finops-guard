@@ -105,9 +105,18 @@ const (
 	defaultCallOutputTokens = 500
 )
 
+// Flat per-call cost estimates for providers not modelled in pricing.json.
+// These are conservative published-rate approximations (USD per call).
+const (
+	CostBedrockClaudeSonnet = 0.015  // AWS Bedrock Claude 3.5 Sonnet estimate
+	CostVertexGeminiPro     = 0.0025 // GCP Vertex AI Gemini Pro estimate
+	CostPineconeQuery       = 0.001  // Pinecone vector query estimate
+)
+
 // EstimateCallCost estimates the cost of a single call to targetAPI
-// ("openai", "anthropic", "athena", or "dynamodb"), using default assumed
-// token counts for LLM calls and billing-minimum units for cloud APIs.
+// ("openai", "anthropic", "athena", "dynamodb", "bedrock", "vertex",
+// "pinecone"), using default assumed token counts for LLM calls,
+// billing-minimum units for cloud APIs, and flat estimates for the rest.
 func (c *PricingCatalog) EstimateCallCost(targetAPI string) float64 {
 	switch targetAPI {
 	case "openai":
@@ -118,6 +127,12 @@ func (c *PricingCatalog) EstimateCallCost(targetAPI string) float64 {
 		return c.CalculateAthenaQueryCost()
 	case "dynamodb":
 		return c.CalculateDynamoDBWriteCost()
+	case "bedrock":
+		return RoundCurrency(CostBedrockClaudeSonnet)
+	case "vertex":
+		return RoundCurrency(CostVertexGeminiPro)
+	case "pinecone":
+		return RoundCurrency(CostPineconeQuery)
 	default:
 		return 0
 	}

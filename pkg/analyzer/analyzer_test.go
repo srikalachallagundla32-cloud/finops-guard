@@ -151,3 +151,102 @@ def process_items(items):
 		t.Errorf("ApplyFix() expected the original flagged line right after the comment, got %q", lines[issue.LineNumber])
 	}
 }
+
+// TestScanFile_NewProviderRules covers the Phase 2 rules FG-005 (AWS Bedrock),
+// FG-006 (GCP Vertex AI), and FG-007 (Pinecone / vector DB) across Python and
+// TypeScript/JavaScript, plus a negative (non-loop) case.
+func TestScanFile_NewProviderRules(t *testing.T) {
+	tests := []struct {
+		name         string
+		file         string
+		code         string
+		wantRuleID   string
+		wantIssueCnt int
+	}{
+		{
+			name: "Bedrock invoke_model inside Python for loop",
+			file: "test.py",
+			code: `
+for item in dataset:
+    response = bedrock.invoke_model(modelId='anthropic.claude-3', body=item)
+`,
+			wantRuleID:   "FG-005",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "Bedrock Converse command inside TS forEach",
+			file: "test.ts",
+			code: `
+ids.forEach((id) => {
+  client.send(new ConverseCommand({ modelId: "anthropic.claude-3" }));
+});
+`,
+			wantRuleID:   "FG-005",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "Vertex AI generate_content inside Python for loop",
+			file: "test.py",
+			code: `
+for prompt in prompts:
+    result = model.generate_content(prompt)
+`,
+			wantRuleID:   "FG-006",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "Vertex AI generateContent inside TS forEach",
+			file: "test.ts",
+			code: `
+prompts.forEach((p) => {
+  const r = generativeModel.generateContent(p);
+});
+`,
+			wantRuleID:   "FG-006",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "Pinecone query inside Python for loop",
+			file: "test.py",
+			code: `
+for vec in embeddings:
+    res = index.query(vector=vec, top_k=5)
+`,
+			wantRuleID:   "FG-007",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "Vector upsert inside TS forEach",
+			file: "test.ts",
+			code: `
+vectors.forEach((v) => {
+  index.upsert([v]);
+});
+`,
+			wantRuleID:   "FG-007",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "Bedrock call OUTSIDE a loop is not flagged",
+			file: "test.py",
+			code: `
+def one_shot(item):
+    return bedrock.invoke_model(modelId='anthropic.claude-3', body=item)
+`,
+			wantRuleID:   "",
+			wantIssueCnt: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issues := analyzer.ScanCodeSnippet(tt.code, tt.file)
+			if len(issues) != tt.wantIssueCnt {
+				t.Fatalf("ScanCodeSnippet() found %d issues; want %d (%+v)", len(issues), tt.wantIssueCnt, issues)
+			}
+			if tt.wantIssueCnt > 0 && issues[0].ID != tt.wantRuleID {
+				t.Errorf("ScanCodeSnippet() rule ID = %s; want %s", issues[0].ID, tt.wantRuleID)
+			}
+		})
+	}
+}

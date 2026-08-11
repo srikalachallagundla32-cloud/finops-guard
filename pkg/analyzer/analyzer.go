@@ -3,6 +3,7 @@ package analyzer
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -60,6 +61,31 @@ func GetDefaultRules() []DetectionRule {
 			TargetAPI: "dynamodb",
 			Pattern:   regexp.MustCompile(`(dynamodb\.(put_item|batch_write_item)|docClient\.send\(new PutItemCommand)`),
 		},
+		{
+			ID:        "FG-005",
+			Name:      "AWS Bedrock API Call in Loop",
+			Severity:  "CRITICAL",
+			TargetAPI: "bedrock",
+			// Python boto3 (bedrock-runtime.invoke_model / .converse) and the
+			// AWS SDK for JS command classes.
+			Pattern: regexp.MustCompile(`(bedrock[\w.\-]*\.(invoke_model|converse)|\binvoke_model\s*\(|new\s+(InvokeModel|Converse)Command)`),
+		},
+		{
+			ID:        "FG-006",
+			Name:      "GCP Vertex AI Call in Loop",
+			Severity:  "HIGH",
+			TargetAPI: "vertex",
+			// Python generate_content(...) and JS/TS generateContent(...).
+			Pattern: regexp.MustCompile(`(generate_content|generateContent)\s*\(`),
+		},
+		{
+			ID:        "FG-007",
+			Name:      "Vector DB Query in Loop",
+			Severity:  "HIGH",
+			TargetAPI: "pinecone",
+			// Pinecone / vector index query & upsert (Python and JS/TS).
+			Pattern: regexp.MustCompile(`\b(index|pinecone\w*)\.(query|upsert)\s*\(`),
+		},
 	}
 }
 
@@ -100,11 +126,23 @@ func ScanFile(filePath string, rules []DetectionRule) ([]Issue, error) {
 		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
 	defer file.Close()
+	return scan(file, filePath, rules)
+}
 
+// ScanCodeSnippet scans in-memory source with the default rule set. filePath
+// is used only for issue reporting and the .py/.ts language heuristics.
+func ScanCodeSnippet(code, filePath string) []Issue {
+	issues, _ := scan(strings.NewReader(code), filePath, GetDefaultRules())
+	return issues
+}
+
+// scan is the shared line-by-line, loop-scope-tracking engine behind both
+// ScanFile and ScanCodeSnippet.
+func scan(r io.Reader, filePath string, rules []DetectionRule) ([]Issue, error) {
 	var issues []Issue
 	var scopes []loopScope
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(r)
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
