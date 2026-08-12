@@ -23,7 +23,7 @@
 
 ## ▶ See it live in your terminal
 
-The default `finops-guard` run is an animated **Cost Reactor** TUI — a boot sequence, a Doom-fire cost canvas whose height tracks your projected spend, dollar-rain particles, and navigable findings.
+The default `finops-guard` run is an animated **Cost Reactor** TUI — a boot sequence, a Doom-fire cost canvas whose height tracks your projected spend, dollar-rain particles, and navigable findings. Press **`d`** for a side-by-side refactor diff; try **`--theme=matrix`** or **`--theme=cosmos`** for alternate animated canvases.
 
 ![Cost Reactor TUI](assets/demo.gif)
 
@@ -72,7 +72,7 @@ finops-guard --pricing=pricing.json --scan=examples/ingest_pipeline.py --no-tui
 <td width="50%" valign="top">
 
 ### 🔍 Static Loop Detector
-Scans Python & TypeScript for cloud/LLM API calls nested in `for`/`while` loops — the pattern that multiplies cost by the iteration count. Regex + indentation heuristics, zero runtime, zero API keys.
+Scans Python & TypeScript for **7 providers** (OpenAI, Anthropic, Bedrock, Vertex AI, Athena, DynamoDB, Pinecone) plus **AI-slop patterns** — all nested in `for`/`while` loops, the shape that multiplies cost by the iteration count. Zero runtime, zero API keys.
 
 </td>
 <td width="50%" valign="top">
@@ -97,6 +97,24 @@ Every merge is stamped with a cost delta via `git notes`, so `git log --notes=re
 </td>
 </tr>
 </table>
+
+---
+
+## 🎯 Detections
+
+| Rule | Catches | Severity |
+|------|---------|:--------:|
+| `FG-001` / `FG-002` | OpenAI / Anthropic call in a loop | HIGH |
+| `FG-003` | Athena query in a loop | CRITICAL |
+| `FG-004` | DynamoDB writes in a loop | HIGH |
+| `FG-005` | AWS Bedrock call in a loop | CRITICAL |
+| `FG-006` | GCP Vertex AI call in a loop | HIGH |
+| `FG-007` | Pinecone / vector-DB query in a loop | HIGH |
+| `FG-010` | Full chat-history re-tokenization in a loop | HIGH |
+| `FG-011` | Unthrottled `Promise.all` fan-out | HIGH |
+| `FG-012` | Hardcoded API key / secret in a loop | CRITICAL |
+
+<sub>`FG-008`/`FG-009` (recursive-agent + unthrottled-poll detection) need a real parser and are on the AST-pass roadmap.</sub>
 
 ---
 
@@ -156,6 +174,9 @@ FinOps-Guard ships a ready workflow at [`.github/workflows/finops-guard.yml`](.g
 | `--generate-pr-comment` | Emit the Markdown PR comment (needs `--output-svg`) |
 | `--findings-json` | Write findings + committable suggestion text for the CI suggestion step |
 | `--note` | Print a one-line spend-ledger note for `git notes`, then exit |
+| `--audit` | Print the git-notes historical spend ledger and exit |
+| `--theme` | TUI canvas: `tactical` (default), `matrix`, or `cosmos` |
+| `--version` | Print the version and exit |
 
 ---
 

@@ -335,7 +335,10 @@ func GenerateCardSVG(meter SVGBurnMeter, issues []Issue, analysisSeconds float64
 	panelFill := "#0d1526"
 
 	var s strings.Builder
-	s.WriteString(`<svg width="1500" height="1180" viewBox="0 0 1500 1180" xmlns="http://www.w3.org/2000/svg">`)
+	s.WriteString(`<svg width="1500" height="1180" viewBox="0 0 1500 1180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FinOps-Guard cost analysis">`)
+	// Accessibility: title + description for screen readers.
+	s.WriteString(fmt.Sprintf(`<title>FinOps-Guard: $%.2f of $%.2f budget, %d issue(s)</title>`, meter.TotalRisk, meter.Threshold, len(issues)))
+	s.WriteString(`<desc>Cost analysis card with a burn-gauge, flagged findings, and recommended actions.</desc>`)
 	s.WriteString(fmt.Sprintf(`<defs>`+
 		`<radialGradient id="space" cx="50%%" cy="34%%" r="85%%"><stop offset="0" stop-color="#13223e"/><stop offset="0.55" stop-color="#0a1020"/><stop offset="1" stop-color="#05070d"/></radialGradient>`+
 		`<linearGradient id="gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="%s"/><stop offset="0.5" stop-color="%s"/><stop offset="1" stop-color="%s"/></linearGradient>`+
