@@ -4,7 +4,7 @@
 
 ### Shift-left cost protection for cloud & LLM API calls
 
-**FinOps-Guard is a static-analysis CLI that catches the loop-bound API calls — the "AI slop" — that quietly turn a $5 script into a $5,000 cloud bill. It scans your code before merge, projects the dollar risk, and reports it right where you review: the pull request.**
+**FinOps-Guard is a static-analysis CLI that catches the loop-bound API calls — the "AI slop" — that quietly turn a $5 script into a $5,000 cloud bill. It scans your code before merge across **7 providers** (OpenAI, Anthropic, Bedrock, Vertex AI, Athena, DynamoDB, Pinecone), projects the dollar risk, and reports it right where you review: the pull request.**
 
 [![CI](https://github.com/srikalachallagundla32-cloud/finops-guard/actions/workflows/finops-guard.yml/badge.svg)](https://github.com/srikalachallagundla32-cloud/finops-guard/actions/workflows/finops-guard.yml)
 ![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)
