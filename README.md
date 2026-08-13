@@ -2,9 +2,9 @@
 
 # 🛡️ FinOps-Guard
 
-### Shift-left cost protection for cloud & LLM API calls
+### Catch what your coding agent wrote — before it bills you
 
-**FinOps-Guard is a static-analysis CLI that catches the loop-bound API calls — the "AI slop" — that quietly turn a $5 script into a $5,000 cloud bill. It scans your code before merge across **7 providers** (OpenAI, Anthropic, Bedrock, Vertex AI, Athena, DynamoDB, Pinecone), projects the dollar risk, and reports it right where you review: the pull request.**
+**AI coding agents write code that _runs_. They never feel the invoice.** FinOps-Guard is a static-analysis CLI that catches the loop-bound, fan-out, and re-tokenizing API calls — the **"AI slop"** an agent happily ships — that quietly turn a $5 script into a $5,000 cloud bill. It scans the diff **before merge** across **7 providers** (OpenAI, Anthropic, Bedrock, Vertex AI, Athena, DynamoDB, Pinecone), projects the dollar risk, and reports it right where you review: **the pull request**.
 
 [![CI](https://github.com/srikalachallagundla32-cloud/finops-guard/actions/workflows/finops-guard.yml/badge.svg)](https://github.com/srikalachallagundla32-cloud/finops-guard/actions/workflows/finops-guard.yml)
 ![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)
@@ -102,19 +102,21 @@ Every merge is stamped with a cost delta via `git notes`, so `git log --notes=re
 
 ## 🎯 Detections
 
+**The agent-slop rules (`FG-010`–`FG-012`) are the point.** Every linter catches a call in a loop. Nobody catches the shape an autonomous coding agent actually writes: a full chat history re-tokenized every turn, an unthrottled `Promise.all` fanning out a thousand calls at once, a secret hardcoded into a hot path. That's the code that ships green, passes tests, and lands the bill three weeks later.
+
 | Rule | Catches | Severity |
 |------|---------|:--------:|
+| **`FG-010`** | **Full chat-history re-tokenization in a loop** — the classic agent context blow-up | **HIGH** |
+| **`FG-011`** | **Unthrottled `Promise.all` fan-out** — agent parallelizes without a concurrency cap | **HIGH** |
+| **`FG-012`** | **Hardcoded API key / secret in a loop** — agent inlines a credential into a hot path | **CRITICAL** |
 | `FG-001` / `FG-002` | OpenAI / Anthropic call in a loop | HIGH |
 | `FG-003` | Athena query in a loop | CRITICAL |
 | `FG-004` | DynamoDB writes in a loop | HIGH |
 | `FG-005` | AWS Bedrock call in a loop | CRITICAL |
 | `FG-006` | GCP Vertex AI call in a loop | HIGH |
 | `FG-007` | Pinecone / vector-DB query in a loop | HIGH |
-| `FG-010` | Full chat-history re-tokenization in a loop | HIGH |
-| `FG-011` | Unthrottled `Promise.all` fan-out | HIGH |
-| `FG-012` | Hardcoded API key / secret in a loop | CRITICAL |
 
-<sub>`FG-008`/`FG-009` (recursive-agent + unthrottled-poll detection) need a real parser and are on the AST-pass roadmap.</sub>
+<sub>`FG-008`/`FG-009` (recursive-agent + unthrottled-poll detection) need a real parser and are on the AST-pass roadmap — the next slice of the agent-slop wedge.</sub>
 
 ---
 
