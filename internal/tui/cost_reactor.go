@@ -347,14 +347,14 @@ func (m *CostReactor) velocityMeter(status Status) string {
 	for i := 0; i < n; i++ {
 		switch {
 		case i < filled && i == spark:
-			b.WriteString(lipgloss.NewStyle().Foreground(colorButter).Bold(true).Render("▰"))
+			b.WriteString(lipgloss.NewStyle().Foreground(colorButter).Bold(true).Render("█"))
 		case i < filled:
-			b.WriteString(lipgloss.NewStyle().Foreground(status.Color()).Render("▰"))
+			b.WriteString(lipgloss.NewStyle().Foreground(status.Color()).Render("█"))
 		default:
-			b.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render("▱"))
+			b.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render("░"))
 		}
 	}
-	return fmt.Sprintf("🔥 %s %d%%", b.String(), int(ratio*100))
+	return fmt.Sprintf("▐ %s %d%%", b.String(), int(ratio*100))
 }
 
 // pulseColor flickers between two reds each few frames for CRITICAL emphasis.
@@ -546,10 +546,10 @@ func (m *CostReactor) View() string {
 	var doc strings.Builder
 
 	// Header bar with separator
-	headerLeft := lipgloss.NewStyle().Foreground(colorPink).Bold(true).Render("🛡️ FINOPS-GUARD")
+	headerLeft := lipgloss.NewStyle().Foreground(colorPink).Bold(true).Render("▌ FINOPS-GUARD")
 	headerRight := lipgloss.NewStyle().Foreground(status.Color()).Bold(true).Render(fmt.Sprintf("⚡ %s", status))
 	headerVersion := lipgloss.NewStyle().Foreground(colorLavender).Render("v0.1.0")
-	padding := strings.Repeat(" ", m.width-len("🛡️ FINOPS-GUARD ")-len("v0.1.0 ")-len(fmt.Sprintf("⚡ %s", status)))
+	padding := strings.Repeat(" ", m.width-len("▌ FINOPS-GUARD ")-len("v0.1.0 ")-len(fmt.Sprintf("⚡ %s", status)))
 	headerBar := fmt.Sprintf("%s %s%s%s", headerLeft, headerVersion, padding, headerRight)
 	doc.WriteString(headerBar + "\n")
 	doc.WriteString(lipgloss.NewStyle().Foreground(colorMagenta).Render(strings.Repeat("─", m.width)) + "\n\n")
@@ -567,7 +567,7 @@ func (m *CostReactor) View() string {
 				severityColor = colorButter
 			}
 			var d strings.Builder
-			d.WriteString(lipgloss.NewStyle().Foreground(colorCoral).Bold(true).Render("📍 CURRENT LEAK") + "\n")
+			d.WriteString(lipgloss.NewStyle().Foreground(colorCoral).Bold(true).Render("▌ CURRENT LEAK") + "\n")
 			d.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render(fmt.Sprintf("Location: %s:%d", selected.FilePath, selected.LineNumber)) + "\n")
 			d.WriteString(lipgloss.NewStyle().Foreground(colorButter).Render(fmt.Sprintf("Cost/run:  $%.4f [%s]", selected.EstCostRisk, selected.ID)) + "\n")
 			d.WriteString(lipgloss.NewStyle().Foreground(severityColor).Render(fmt.Sprintf("Severity:  %s", selected.Severity)))
@@ -581,7 +581,7 @@ func (m *CostReactor) View() string {
 	}
 
 	// Findings list
-	doc.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colorPink).Render("🔥 DETECTED LEAKS") + "\n")
+	doc.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colorPink).Render("▌ DETECTED LEAKS") + "\n")
 	if len(m.issues) == 0 {
 		doc.WriteString(lipgloss.NewStyle().Foreground(colorMint).Render("None.\n\n"))
 	} else {
@@ -613,7 +613,7 @@ func (m *CostReactor) View() string {
 
 	// CFO quote bar with background
 	doc.WriteString(lipgloss.NewStyle().Foreground(colorLavender).Render("─────────────────────────────────────────────────────────\n"))
-	cfoLabel := lipgloss.NewStyle().Foreground(colorMint).Bold(true).Render("💼 CFO")
+	cfoLabel := lipgloss.NewStyle().Foreground(colorMint).Bold(true).Render("▌ CFO")
 	cfoStyle := lipgloss.NewStyle().Italic(true).Foreground(status.Color())
 	doc.WriteString(cfoLabel + "  " + cfoStyle.Render(m.selectedQuote) + "\n")
 

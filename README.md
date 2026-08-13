@@ -25,9 +25,9 @@
 
 The default `finops-guard` run is an animated **Cost Reactor** TUI — a boot sequence, a Doom-fire cost canvas whose height tracks your projected spend, dollar-rain particles, and navigable findings. Press **`d`** for a side-by-side refactor diff; try **`--theme=matrix`** or **`--theme=cosmos`** for alternate animated canvases.
 
-![Cost Reactor TUI](assets/demo.gif)
+<img src="assets/demo.png" width="900" alt="FinOps-Guard Cost Reactor TUI — a Doom-fire cost canvas, dollar-rain particles, a live budget-burn gauge, and navigable findings" />
 
-> **Not rendered yet?** The recording spec lives in [`demo.tape`](demo.tape). Generate the GIF with `brew install vhs && make demo-gif`.
+> **Want the animated version?** The recording spec lives in [`demo.tape`](demo.tape). Generate a GIF with `brew install vhs && make demo-gif`.
 
 ---
 
