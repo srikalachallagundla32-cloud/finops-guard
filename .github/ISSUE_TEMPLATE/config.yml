@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Discussion / questions
+    url: https://github.com/srikalachallagundla32-cloud/finops-guard/discussions
+    about: Usage questions and ideas — issues are for bugs and concrete proposals.

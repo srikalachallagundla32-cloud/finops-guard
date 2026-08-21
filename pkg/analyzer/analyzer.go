@@ -121,6 +121,21 @@ func GetDefaultRules() []DetectionRule {
 var (
 	loopKeywordPattern = regexp.MustCompile(`^\s*(for|while)\b`)
 	loopMethodPattern  = regexp.MustCompile(`\.(forEach|map)\s*\(`)
+
+	// whileTruePattern matches infinite loops (Python `while True:`,
+	// JS/TS `while (true)` / `for (;;)`) — the shape FG-009 watches.
+	whileTruePattern = regexp.MustCompile(`^\s*while\s+(True|true|1)\b|^\s*while\s*\(\s*(true|1)\s*\)|for\s*\(\s*;\s*;\s*\)`)
+
+	// pollCallPattern matches a network / status-poll call — the paid work
+	// a hot loop hammers when it never sleeps.
+	pollCallPattern = regexp.MustCompile(`requests\.(get|post|put|patch|delete|request)|httpx\.(get|post|put|patch|delete|request|stream)|urllib\.request|http\.client|fetch\s*\(|axios(\.|\s*\()|\.poll\(|\.get_object\(|\.head_object\(|\.receive_message\(|\.describe_[A-Za-z_]+\(|\.list_[A-Za-z_]+\(`)
+
+	// throttlePattern matches a DELAY between iterations: a sleep, a
+	// backoff, or an explicit wait. Its ABSENCE across the whole while-true
+	// body — even when the loop has a legitimate return-when-done exit — is
+	// the busy-poll leak FG-009 flags. (break/return are exits, not delays,
+	// so they must NOT count as throttling.)
+	throttlePattern = regexp.MustCompile(`time\.sleep|asyncio\.sleep|await\s+sleep|setTimeout|\bsleep\s*\(|backoff|\.wait\(|rate_?limit|throttle`)
 )
 
 // loopScope tracks one open loop body, either by brace nesting (JS/TS)
@@ -129,6 +144,35 @@ type loopScope struct {
 	braceTracked bool
 	indent       int
 	braceBalance int
+
+	// pollWatch fields: set when this scope is an infinite loop, used by
+	// FG-009 to flag a poll call that the loop body never throttles.
+	pollWatch   bool
+	sawPoll     bool
+	pollLine    int
+	pollText    string
+	sawThrottle bool
+}
+
+// stripInlineComment removes a trailing line comment so that words inside
+// comments (e.g. "no time.sleep here") never satisfy a code pattern. It is a
+// heuristic: it ignores "//" in "://" (URLs) and does not parse strings.
+func stripInlineComment(line string, isPython bool) string {
+	if isPython {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			return line[:i]
+		}
+		return line
+	}
+	for i := 0; i+1 < len(line); i++ {
+		if line[i] == '/' && line[i+1] == '/' {
+			if i > 0 && line[i-1] == ':' {
+				continue // part of a URL scheme, not a comment
+			}
+			return line[:i]
+		}
+	}
+	return line
 }
 
 func indentOf(line string) int {
@@ -171,6 +215,22 @@ func scan(r io.Reader, filePath string, rules []DetectionRule) ([]Issue, error) 
 	var issues []Issue
 	var scopes []loopScope
 
+	// finalizePoll emits an FG-009 finding when an infinite loop is popped
+	// (or the file ends) having made a poll call it never throttled.
+	finalizePoll := func(sc loopScope) {
+		if sc.pollWatch && sc.sawPoll && !sc.sawThrottle {
+			issues = append(issues, Issue{
+				ID:          "FG-009",
+				RuleName:    "Unthrottled Poll Loop",
+				FilePath:    filePath,
+				LineNumber:  sc.pollLine,
+				CodeSnippet: sc.pollText,
+				Severity:    "HIGH",
+				TargetAPI:   "poll",
+			})
+		}
+	}
+
 	scanner := bufio.NewScanner(r)
 	lineNumber := 0
 	for scanner.Scan() {
@@ -183,6 +243,7 @@ func scan(r io.Reader, filePath string, rules []DetectionRule) ([]Issue, error) 
 			for len(scopes) > 0 {
 				top := scopes[len(scopes)-1]
 				if !top.braceTracked && currentIndent <= top.indent {
+					finalizePoll(top)
 					scopes = scopes[:len(scopes)-1]
 					continue
 				}
@@ -195,6 +256,7 @@ func scan(r io.Reader, filePath string, rules []DetectionRule) ([]Issue, error) 
 			scopes = append(scopes, loopScope{
 				braceTracked: strings.Contains(rawLine, "{"),
 				indent:       indentOf(rawLine),
+				pollWatch:    whileTruePattern.MatchString(trimmed),
 			})
 		}
 
@@ -209,6 +271,7 @@ func scan(r io.Reader, filePath string, rules []DetectionRule) ([]Issue, error) 
 			for len(scopes) > 0 {
 				top := scopes[len(scopes)-1]
 				if top.braceTracked && top.braceBalance <= 0 {
+					finalizePoll(top)
 					scopes = scopes[:len(scopes)-1]
 					continue
 				}
@@ -218,6 +281,29 @@ func scan(r io.Reader, filePath string, rules []DetectionRule) ([]Issue, error) 
 
 		if len(scopes) == 0 {
 			continue
+		}
+
+		// FG-009 bookkeeping: record poll calls and any throttle (delay)
+		// across every enclosing infinite loop, ignoring comment text so a
+		// comment mentioning "sleep" can't mask a real leak. Precision over
+		// recall — see docs/design/ast-pass.md.
+		code := stripInlineComment(trimmed, strings.HasSuffix(filePath, ".py"))
+		isPoll := pollCallPattern.MatchString(code)
+		isThrottle := throttlePattern.MatchString(code)
+		if isPoll || isThrottle {
+			for i := range scopes {
+				if !scopes[i].pollWatch {
+					continue
+				}
+				if isThrottle {
+					scopes[i].sawThrottle = true
+				}
+				if isPoll && !scopes[i].sawPoll {
+					scopes[i].sawPoll = true
+					scopes[i].pollLine = lineNumber
+					scopes[i].pollText = trimmed
+				}
+			}
 		}
 
 		for _, rule := range rules {
@@ -233,6 +319,12 @@ func scan(r io.Reader, filePath string, rules []DetectionRule) ([]Issue, error) 
 				})
 			}
 		}
+	}
+
+	// Flush any infinite loops still open at EOF.
+	for len(scopes) > 0 {
+		finalizePoll(scopes[len(scopes)-1])
+		scopes = scopes[:len(scopes)-1]
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -345,4 +437,37 @@ func ApplyFix(issue Issue) error {
 		return fmt.Errorf("failed to write file %s: %w", issue.FilePath, err)
 	}
 	return nil
+}
+
+// --- AST pass seam (M0) -------------------------------------------------
+//
+// ASTScanFile is the second issue producer, parallel to ScanFile. It is the
+// home for detections that a line-by-line regex scan structurally cannot
+// express — FG-008 (recursive-agent blow-up) needs a call graph, and the
+// honest FG-009 wants a real parse tree. It currently returns no issues: the
+// seam lands first (zero behavior change, no CGO/parser dependency) so the
+// merge path and its callers are wired and tested ahead of the parser work.
+// See docs/design/ast-pass.md.
+func ASTScanFile(filePath string) ([]Issue, error) {
+	return nil, nil
+}
+
+// Merge concatenates issue sets from multiple passes (regex + AST) into one
+// stable, de-duplicated slice. Order is preserved (first occurrence wins);
+// duplicates are keyed by (ID, FilePath, LineNumber) so the same finding
+// surfaced by two passes is reported once.
+func Merge(sets ...[]Issue) []Issue {
+	seen := make(map[string]bool)
+	var out []Issue
+	for _, set := range sets {
+		for _, iss := range set {
+			key := fmt.Sprintf("%s\x00%s\x00%d", iss.ID, iss.FilePath, iss.LineNumber)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, iss)
+		}
+	}
+	return out
 }
