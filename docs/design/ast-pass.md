@@ -1,6 +1,6 @@
 # Design: the AST pass — FG-008 & FG-009
 
-> Status: **proposed** · Owner: @srikalachallagundla32-cloud · Tracking: #<!-- filled by issue -->
+> Status: **in progress** (M0 + M2 shipped) · Owner: @srikalachallagundla32-cloud · Tracking: #<!-- filled by issue -->
 
 ## Why
 
@@ -77,7 +77,7 @@ The hard constraint: FinOps-Guard ships as a **pure-Go, `CGO_ENABLED=0`, cross-c
 2. Within the loop body, require a **network/poll call** (LLM/HTTP/SDK targets — reuse regex targets + a small `requests|httpx|fetch|axios|.get(|.poll(` set).
 3. Flag when the body contains **none** of: a `sleep`/`setTimeout`/`await asyncio.sleep`, a `break`/`return` reachable from the top, or a backoff construct. Proving this "none" over the block is the tree question regex can't answer.
 
-`LineNumber` = loop header. `TargetAPI = "poll"`. Note: a *weaker* FG-009 (while-true + poll + no `sleep` on the same indent block) is implementable on today's scope tracker as a stopgap; the AST version is the honest one and supersedes it.
+`LineNumber` = loop header. `TargetAPI = "poll"`. **Shipped:** the scope-tracker version described here (infinite-loop scope + poll present + delay absent, comment-stripped) is live as of the FG-009 PR. An AST version would extend it to delays/exits that live in a called helper; the loop-local detector already covers the dominant in-line pattern.
 
 ## Cost model
 
@@ -90,9 +90,9 @@ Both surface in the same burn gauge / monthly-impact math already in the card an
 
 ## Rollout
 
-- **M0 — seam (no behavior change).** Add `ASTScanFile` returning `nil, nil` behind a `finops_ast` build tag; wire `Merge` in main.go; ship regex-only default so nothing regresses and `go install` needs no C toolchain. *Ships immediately.*
+- **M0 — seam (no behavior change).** ✅ **Shipped.** `ASTScanFile` (currently `nil, nil`) + `Merge` wired in `main.go`; regex-only default, no C toolchain needed. *(Landed pure-Go without the build tag, since no CGO code exists yet; the tag returns when the tree-sitter parser lands at M1.)*
 - **M1 — parser spike.** CGO tree-sitter vs. wazero decision, one grammar (Python) loading and walked in a test. Pick the path.
-- **M2 — FG-009.** Simpler (single-loop-local). Full algorithm + cost case + committable suggestion + fixtures.
+- **M2 — FG-009.** ✅ **Shipped (scope-tracker version).** Detects an infinite loop that polls with no delay by proving the *absence* of any sleep/backoff across the loop body — comment-aware, `break`/`return` correctly treated as exits not delays. Cost case (`poll`) + positive/negative/regression fixtures included. The AST version can later supersede it for cross-function cases; the loop-local detector covers the dominant pattern.
 - **M3 — FG-008.** Call graph + guard heuristic + CRITICAL-when-spending. Fixtures incl. the helper-indirection case.
 - **M4 — TS/JS grammar**, GoReleaser per-platform build matrix, Homebrew cask update, docs. Flip AST on by default.
 
