@@ -91,6 +91,15 @@ func main() {
 		fmt.Printf("❌ [Error] Scanning file: %v\n", err)
 		os.Exit(1)
 	}
+	// Second pass: AST-backed detections (FG-008/009). Currently a no-op seam
+	// (see docs/design/ast-pass.md); merged here so enabling it needs no
+	// change to any downstream consumer of []Issue.
+	astIssues, err := analyzer.ASTScanFile(*scanPath)
+	if err != nil {
+		fmt.Printf("❌ [Error] AST scan: %v\n", err)
+		os.Exit(1)
+	}
+	issues = analyzer.Merge(issues, astIssues)
 	analysisSeconds := time.Since(scanStart).Seconds()
 
 	var totalRisk float64

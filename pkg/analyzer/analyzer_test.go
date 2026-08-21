@@ -331,3 +331,124 @@ for (const region of regions) {
 		})
 	}
 }
+
+// TestScanFile_PollLoopRule covers FG-009 (unthrottled poll loop): it must fire
+// on an infinite loop that polls with no delay, and stay silent when the loop
+// backs off or when the poll sits in a bounded (non-infinite) loop.
+func TestScanFile_PollLoopRule(t *testing.T) {
+	tests := []struct {
+		name         string
+		file         string
+		code         string
+		wantRuleID   string
+		wantIssueCnt int
+	}{
+		{
+			name: "FG-009 unthrottled while True (Python)",
+			file: "poll.py",
+			code: `
+while True:
+    resp = requests.get("https://api/jobs/1")
+    if resp.json()["state"] == "done":
+        return resp
+`,
+			wantRuleID:   "FG-009",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "FG-009 throttled loop does not fire (Python)",
+			file: "poll_ok.py",
+			code: `
+while True:
+    resp = requests.get("https://api/jobs/1")
+    if resp.json()["state"] == "done":
+        return resp
+    time.sleep(5)
+`,
+			wantIssueCnt: 0,
+		},
+		{
+			name: "FG-009 unthrottled while(true) (TypeScript)",
+			file: "poll.ts",
+			code: `
+while (true) {
+  const r = await fetch("https://api/jobs/1");
+  if (done) break;
+}
+`,
+			wantRuleID:   "FG-009",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "FG-009 backoff via setTimeout does not fire (TypeScript)",
+			file: "poll_ok.ts",
+			code: `
+while (true) {
+  const r = await fetch("https://api/jobs/1");
+  if (done) break;
+  await new Promise((res) => setTimeout(res, 1000));
+}
+`,
+			wantIssueCnt: 0,
+		},
+		{
+			name: "FG-009 comment mentioning sleep still fires (regression)",
+			file: "poll_comment.py",
+			code: `
+while True:
+    r = requests.get("https://api/jobs/1")
+    # TODO: add time.sleep here later
+`,
+			wantRuleID:   "FG-009",
+			wantIssueCnt: 1,
+		},
+		{
+			name: "FG-009 does not fire on a bounded for-loop poll",
+			file: "bounded.py",
+			code: `
+for i in range(10):
+    r = requests.get("https://api/jobs/1")
+`,
+			wantIssueCnt: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issues := analyzer.ScanCodeSnippet(tt.code, tt.file)
+			if len(issues) != tt.wantIssueCnt {
+				t.Fatalf("ScanCodeSnippet() found %d issues; want %d (%+v)", len(issues), tt.wantIssueCnt, issues)
+			}
+			if tt.wantIssueCnt > 0 && issues[0].ID != tt.wantRuleID {
+				t.Errorf("ScanCodeSnippet() rule ID = %s; want %s", issues[0].ID, tt.wantRuleID)
+			}
+			if tt.wantIssueCnt > 0 && issues[0].TargetAPI != "poll" {
+				t.Errorf("ScanCodeSnippet() TargetAPI = %s; want poll", issues[0].TargetAPI)
+			}
+		})
+	}
+}
+
+// TestMerge covers the M0 AST-pass seam: two issue sets combine into a stable,
+// de-duplicated slice keyed by (ID, FilePath, LineNumber).
+func TestMerge(t *testing.T) {
+	a := []analyzer.Issue{
+		{ID: "FG-001", FilePath: "x.py", LineNumber: 3},
+		{ID: "FG-009", FilePath: "x.py", LineNumber: 8},
+	}
+	b := []analyzer.Issue{
+		{ID: "FG-009", FilePath: "x.py", LineNumber: 8}, // duplicate of a[1]
+		{ID: "FG-008", FilePath: "x.py", LineNumber: 12},
+	}
+	got := analyzer.Merge(a, b)
+	if len(got) != 3 {
+		t.Fatalf("Merge() = %d issues; want 3 (%+v)", len(got), got)
+	}
+	// order preserved, first occurrence wins
+	wantOrder := []string{"FG-001", "FG-009", "FG-008"}
+	for i, id := range wantOrder {
+		if got[i].ID != id {
+			t.Errorf("Merge()[%d].ID = %s; want %s", i, got[i].ID, id)
+		}
+	}
+}

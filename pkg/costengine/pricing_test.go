@@ -100,3 +100,18 @@ func TestCalculateLLMLoopCost(t *testing.T) {
 		})
 	}
 }
+
+// TestEstimateCallCost_AgentSlopTargets covers the FG-009/FG-008 cost cases
+// (poll, recursion) added for the AST-pass wedge.
+func TestEstimateCallCost_AgentSlopTargets(t *testing.T) {
+	c := &costengine.PricingCatalog{}
+	if got := c.EstimateCallCost("poll"); got != costengine.RoundCurrency(costengine.CostPollLoop) {
+		t.Errorf("EstimateCallCost(poll) = %v; want %v", got, costengine.RoundCurrency(costengine.CostPollLoop))
+	}
+	if got := c.EstimateCallCost("recursion"); got != costengine.RoundCurrency(costengine.CostRecursionFanout) {
+		t.Errorf("EstimateCallCost(recursion) = %v; want %v", got, costengine.RoundCurrency(costengine.CostRecursionFanout))
+	}
+	if got := c.EstimateCallCost("unknown-target"); got != 0 {
+		t.Errorf("EstimateCallCost(unknown) = %v; want 0", got)
+	}
+}

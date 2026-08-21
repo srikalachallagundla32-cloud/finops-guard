@@ -109,6 +109,7 @@ Every merge is stamped with a cost delta via `git notes`, so `git log --notes=re
 | **`FG-010`** | **Full chat-history re-tokenization in a loop** — the classic agent context blow-up | **HIGH** |
 | **`FG-011`** | **Unthrottled `Promise.all` fan-out** — agent parallelizes without a concurrency cap | **HIGH** |
 | **`FG-012`** | **Hardcoded API key / secret in a loop** — agent inlines a credential into a hot path | **CRITICAL** |
+| **`FG-009`** | **Unthrottled poll loop** — `while True:` that hammers an endpoint with no sleep/backoff | **HIGH** |
 | `FG-001` / `FG-002` | OpenAI / Anthropic call in a loop | HIGH |
 | `FG-003` | Athena query in a loop | CRITICAL |
 | `FG-004` | DynamoDB writes in a loop | HIGH |
@@ -116,7 +117,7 @@ Every merge is stamped with a cost delta via `git notes`, so `git log --notes=re
 | `FG-006` | GCP Vertex AI call in a loop | HIGH |
 | `FG-007` | Pinecone / vector-DB query in a loop | HIGH |
 
-<sub>`FG-008`/`FG-009` (recursive-agent + unthrottled-poll detection) need a real parser and are on the AST-pass roadmap — the next slice of the agent-slop wedge.</sub>
+<sub>`FG-009` ships now via infinite-loop scope tracking that proves the *absence* of any delay across the loop body (comment-aware, so a comment mentioning `sleep` can't mask a leak). `FG-008` (recursive-agent blow-up) needs a call graph and is the next slice of the [AST-pass roadmap](docs/design/ast-pass.md).</sub>
 
 ---
 

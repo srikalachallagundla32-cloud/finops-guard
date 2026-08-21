@@ -113,6 +113,8 @@ const (
 	CostPineconeQuery       = 0.001  // Pinecone vector query estimate
 	CostRetokenization      = 0.015  // Re-sending full growing chat history (FG-010)
 	CostConcurrencyBlast    = 0.02   // Unthrottled Promise.all fan-out in a loop (FG-011)
+	CostPollLoop            = 0.005  // Per-iteration cost of a hot unthrottled poll loop (FG-009)
+	CostRecursionFanout     = 0.05   // Upper-bound risk of an uncapped recursive-agent call (FG-008)
 )
 
 // EstimateCallCost estimates the cost of a single call to targetAPI
@@ -139,6 +141,10 @@ func (c *PricingCatalog) EstimateCallCost(targetAPI string) float64 {
 		return RoundCurrency(CostRetokenization)
 	case "concurrency":
 		return RoundCurrency(CostConcurrencyBlast)
+	case "poll":
+		return RoundCurrency(CostPollLoop)
+	case "recursion":
+		return RoundCurrency(CostRecursionFanout)
 	default:
 		return 0
 	}
